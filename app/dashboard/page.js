@@ -4,6 +4,8 @@ import { ethers } from 'ethers';
 
 const CONTRACT_ADDRESS = "0xE0F2C50E2F2A6F91A02De6d9C398088113d9f5B0";
 const ARC_RPC_URL = "https://rpc.testnet.arc.network";
+const ARC_CHAIN_ID = 5042002;
+const ARC_CHAIN_ID_HEX = "0x4CEB92";
 
 const CONTRACT_ABI = [
   "function buyTickets(uint256 numberOfTickets) public payable",
@@ -18,7 +20,8 @@ export default function Dashboard() {
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('buy'); 
-  const [loading, setLoading] = useState(false);
+  // Nâng cấp state loading để báo cáo chi tiết hơn
+  const [loadingState, setLoadingState] = useState(''); 
   const [ticketCount, setTicketCount] = useState(1);
   const [showWalletModal, setShowWalletModal] = useState(false);
 
@@ -28,23 +31,53 @@ export default function Dashboard() {
   const [winner, setWinner] = useState('None');
   const [timeLeft, setTimeLeft] = useState('Syncing...');
 
+  // Hàm cập nhật dữ liệu chung (dùng lại nhiều lần)
+  const fetchPublicData = async () => {
+    try {
+      const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
+      const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+      
+      const balance = await lotto.getPoolBalance();
+      setPoolBalance(ethers.formatEther(balance));
+      
+      const pList = await lotto.getPlayers();
+      setPlayersList(pList);
+      
+      const lastW = await lotto.recentWinner();
+      if (lastW !== "0x0000000000000000000000000000000000000000") {
+        setWinner(lastW);
+      }
+    } catch (err) {
+      console.error("Public Data Error:", err);
+    }
+  };
+
   useEffect(() => {
-    const fetchPublicData = async () => {
+    fetchPublicData();
+
+    // 1. Logic tự động kết nối lại ví nếu ngưởi dùng ấn F5
+    const autoReconnect = async () => {
+      if (window.ethereum) {
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) {
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+            setWallet(accounts[0]);
+            setSignerInstance(signer);
+          }
+        } catch (e) {
+          console.error("Auto-reconnect failed", e);
+        }
+      }
+    };
+    autoReconnect();
+
+    // 2. Logic đồng hồ đếm ngược
+    const setupTimer = async () => {
       try {
         const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
         const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-        
-        const balance = await lotto.getPoolBalance();
-        setPoolBalance(ethers.formatEther(balance));
-        
-        const pList = await lotto.getPlayers();
-        setPlayersList(pList);
-        
-        const lastW = await lotto.recentWinner();
-        if (lastW !== "0x0000000000000000000000000000000000000000") {
-          setWinner(lastW);
-        }
-
         const lastTime = await lotto.lastDrawTime();
         const nextDrawTime = Number(lastTime) + 3600; 
         
@@ -53,21 +86,22 @@ export default function Dashboard() {
           const diff = nextDrawTime - now;
           if (diff <= 0) {
             setTimeLeft("READY TO DRAW!");
-            clearInterval(timer);
           } else {
             const m = Math.floor(diff / 60);
             const s = diff % 60;
             setTimeLeft(`${m}m ${s}s`);
           }
         }, 1000);
-
-        return () => clearInterval(timer);
+        return timer;
       } catch (err) {
-        console.error(err);
         setTimeLeft("RPC Sync Error");
+        return null;
       }
     };
-    fetchPublicData();
+    
+    let intervalId;
+    setupTimer().then(id => { intervalId = id; });
+    return () => { if (intervalId) clearInterval(intervalId); };
   }, []);
 
   const connectWallet = async (walletType) => {
@@ -77,72 +111,90 @@ export default function Dashboard() {
       if (walletType === 'okx' && window.okxwallet) targetProvider = window.okxwallet;
       else if (walletType === 'binance' && window.BinanceChain) targetProvider = window.BinanceChain;
       else if (walletType === 'trust' && window.trustwallet) targetProvider = window.trustwallet;
-      
-      if (!targetProvider && window.ethereum) {
-        targetProvider = window.ethereum;
-      }
+      else if (window.ethereum) targetProvider = window.ethereum;
     }
 
-    if (!targetProvider) {
-      alert(`No Web3 wallet extension detected!`);
-      return;
-    }
+    if (!targetProvider) return alert(`No Web3 wallet extension detected!`);
 
     try {
-      const browserProvider = new ethers.BrowserProvider(targetProvider);
       await targetProvider.request({ method: 'eth_requestAccounts' });
-      const signer = await browserProvider.getSigner();
+      const browserProvider = new ethers.BrowserProvider(targetProvider);
+      const network = await browserProvider.getNetwork();
+      
+      if (Number(network.chainId) !== ARC_CHAIN_ID) {
+        try {
+          await targetProvider.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: ARC_CHAIN_ID_HEX }],
+          });
+        } catch (switchError) {
+          if (switchError.code === 4902) {
+             alert("Please add ARC Testnet to your wallet first!");
+             return;
+          }
+          throw switchError;
+        }
+      }
+
+      const updatedProvider = new ethers.BrowserProvider(targetProvider);
+      const signer = await updatedProvider.getSigner();
       const address = await signer.getAddress();
       
       setWallet(address);
       setSignerInstance(signer);
       setShowWalletModal(false);
-      
-      const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
-      const balance = await lotto.getPoolBalance();
-      setPoolBalance(ethers.formatEther(balance));
-      const pList = await lotto.getPlayers();
-      setPlayersList(pList);
+      await fetchPublicData();
+
     } catch (err) {
-      console.error(err);
-      alert(`Connection rejected.`);
+      alert(`Error: ${err.message || 'Connection failed'}`);
     }
   };
 
   const handleBuyTickets = async () => {
     if (!signerInstance) return alert('Please connect your wallet first!');
-    setLoading(true);
+    
     try {
+      // Trạng thái 1: Yêu cầu ký ví
+      setLoadingState('Sign in Wallet...');
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
       const totalCost = (0.1 * ticketCount).toFixed(1);
       
       const tx = await lotto.buyTickets(ticketCount, {
         value: ethers.parseEther(totalCost.toString())
       });
-      await tx.wait();
+      
+      // Trạng thái 2: Chờ blockchain đóng gói giao dịch
+      setLoadingState('Mining Block...');
+      await tx.wait(); // Đây là lúc mất thời gian nhất (5-15 giây)
       
       alert(`Success! Purchased ${ticketCount} ticket(s).`);
-      window.location.reload(); 
+      
+      // Tải lại dữ liệu mượt mà, KHÔNG reload trang (không dùng window.location.reload)
+      await fetchPublicData();
     } catch (err) {
-      alert('Transaction failed. Make sure your wallet is on ARC Testnet and has enough USDC.');
+      alert('Transaction failed or rejected.');
     } finally {
-      setLoading(false);
+      setLoadingState('');
     }
   };
 
   const handleDrawLottery = async () => {
     if (!signerInstance) return alert('Please connect your wallet first!');
-    setLoading(true);
+    
     try {
+      setLoadingState('Sign to Draw...');
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
       const tx = await lotto.drawLottery();
+      
+      setLoadingState('Mining Block...');
       await tx.wait();
+      
       alert('Draw Successful!');
-      window.location.reload();
+      await fetchPublicData(); // Tải lại dữ liệu mượt mà
     } catch (err) {
-      alert('Draw condition not met yet.');
+      alert('Draw condition not met yet (Timer not zero or Pool is empty).');
     } finally {
-      setLoading(false);
+      setLoadingState('');
     }
   };
 
@@ -211,13 +263,13 @@ export default function Dashboard() {
 
               <div>
                 <button 
-                  onClick={handleBuyTickets} disabled={loading}
+                  onClick={handleBuyTickets} disabled={!!loadingState}
                   className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black py-4 rounded-xl shadow-xl transition-all mb-3 text-sm tracking-wider"
                 >
-                  {loading ? "PROCESSING TX..." : `CONFIRM PURCHASE (${(0.1 * ticketCount).toFixed(1)} USDC)`}
+                  {loadingState ? loadingState : `CONFIRM PURCHASE (${(0.1 * ticketCount).toFixed(1)} USDC)`}
                 </button>
                 <button 
-                  onClick={handleDrawLottery} disabled={loading}
+                  onClick={handleDrawLottery} disabled={!!loadingState}
                   className="w-full bg-transparent border border-slate-700 hover:bg-slate-800 font-bold py-3 rounded-xl transition-all text-xs text-amber-400"
                 >
                   TRIGGER LUCKY DRAW
