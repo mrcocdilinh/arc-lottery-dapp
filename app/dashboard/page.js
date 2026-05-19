@@ -20,18 +20,15 @@ export default function Dashboard() {
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('buy'); 
-  // Nâng cấp state loading để báo cáo chi tiết hơn
   const [loadingState, setLoadingState] = useState(''); 
   const [ticketCount, setTicketCount] = useState(1);
   const [showWalletModal, setShowWalletModal] = useState(false);
 
-  // Blockchain States
   const [poolBalance, setPoolBalance] = useState('0.0');
   const [playersList, setPlayersList] = useState([]);
   const [winner, setWinner] = useState('None');
   const [timeLeft, setTimeLeft] = useState('Syncing...');
 
-  // Hàm cập nhật dữ liệu chung (dùng lại nhiều lần)
   const fetchPublicData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
@@ -55,7 +52,6 @@ export default function Dashboard() {
   useEffect(() => {
     fetchPublicData();
 
-    // 1. Logic tự động kết nối lại ví nếu ngưởi dùng ấn F5
     const autoReconnect = async () => {
       if (window.ethereum) {
         try {
@@ -73,7 +69,6 @@ export default function Dashboard() {
     };
     autoReconnect();
 
-    // 2. Logic đồng hồ đếm ngược
     const setupTimer = async () => {
       try {
         const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
@@ -121,18 +116,41 @@ export default function Dashboard() {
       const browserProvider = new ethers.BrowserProvider(targetProvider);
       const network = await browserProvider.getNetwork();
       
+      // AUTO ADD & SWITCH NETWORK LOGIC
       if (Number(network.chainId) !== ARC_CHAIN_ID) {
         try {
+          // Thử chuyển mạng trước
           await targetProvider.request({
             method: 'wallet_switchEthereumChain',
             params: [{ chainId: ARC_CHAIN_ID_HEX }],
           });
         } catch (switchError) {
+          // Mã 4902 nghĩa là ví chưa cài đặt mạng này
           if (switchError.code === 4902) {
-             alert("Please add ARC Testnet to your wallet first!");
-             return;
+            try {
+              // Tự động thêm mạng ARC Testnet vào ví người dùng
+              await targetProvider.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: ARC_CHAIN_ID_HEX,
+                    chainName: 'Arc Testnet',
+                    rpcUrls: [ARC_RPC_URL],
+                    nativeCurrency: {
+                      name: 'USDC',
+                      symbol: 'USDC',
+                      decimals: 18,
+                    },
+                    blockExplorerUrls: ['https://explorer.testnet.arc.network'],
+                  },
+                ],
+              });
+            } catch (addError) {
+              throw addError;
+            }
+          } else {
+            throw switchError;
           }
-          throw switchError;
         }
       }
 
@@ -154,7 +172,6 @@ export default function Dashboard() {
     if (!signerInstance) return alert('Please connect your wallet first!');
     
     try {
-      // Trạng thái 1: Yêu cầu ký ví
       setLoadingState('Sign in Wallet...');
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
       const totalCost = (0.1 * ticketCount).toFixed(1);
@@ -163,13 +180,10 @@ export default function Dashboard() {
         value: ethers.parseEther(totalCost.toString())
       });
       
-      // Trạng thái 2: Chờ blockchain đóng gói giao dịch
       setLoadingState('Mining Block...');
-      await tx.wait(); // Đây là lúc mất thời gian nhất (5-15 giây)
+      await tx.wait(); 
       
       alert(`Success! Purchased ${ticketCount} ticket(s).`);
-      
-      // Tải lại dữ liệu mượt mà, KHÔNG reload trang (không dùng window.location.reload)
       await fetchPublicData();
     } catch (err) {
       alert('Transaction failed or rejected.');
@@ -190,7 +204,7 @@ export default function Dashboard() {
       await tx.wait();
       
       alert('Draw Successful!');
-      await fetchPublicData(); // Tải lại dữ liệu mượt mà
+      await fetchPublicData();
     } catch (err) {
       alert('Draw condition not met yet (Timer not zero or Pool is empty).');
     } finally {
