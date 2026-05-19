@@ -56,22 +56,36 @@ export default function Dashboard() {
   useEffect(() => {
     fetchPublicData();
 
+    // Tự động kết nối lại ví sau khi F5 bằng LocalStorage
     const autoReconnect = async () => {
-      if (window.ethereum) {
+      const savedWalletType = localStorage.getItem('connectedWalletType');
+      if (!savedWalletType || typeof window === 'undefined') return;
+
+      let targetProvider = null;
+      if (savedWalletType === 'okx' && window.okxwallet) targetProvider = window.okxwallet;
+      else if (savedWalletType === 'binance' && window.BinanceChain) targetProvider = window.BinanceChain;
+      else if (savedWalletType === 'trust' && window.trustwallet) targetProvider = window.trustwallet;
+      else if (window.ethereum) targetProvider = window.ethereum;
+
+      if (targetProvider) {
         try {
-          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-          if (accounts.length > 0) {
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
+          const accounts = await targetProvider.request({ method: 'eth_accounts' });
+          if (accounts && accounts.length > 0) {
+            const browserProvider = new ethers.BrowserProvider(targetProvider);
+            const signer = await browserProvider.getSigner();
             setWallet(accounts[0]);
             setSignerInstance(signer);
+          } else {
+            localStorage.removeItem('connectedWalletType');
           }
         } catch (e) {
           console.error("Auto-reconnect failed", e);
         }
       }
     };
-    autoReconnect();
+    
+    // Đợi 500ms để trình duyệt tải xong tiện ích ví rồi mới dò tìm
+    setTimeout(autoReconnect, 500);
 
     const setupTimer = async () => {
       try {
@@ -153,6 +167,10 @@ export default function Dashboard() {
       setWallet(address);
       setSignerInstance(signer);
       setShowWalletModal(false);
+      
+      // Ghi nhớ ví đã kết nối để không bắt login lại khi F5
+      localStorage.setItem('connectedWalletType', walletType);
+      
       await fetchPublicData();
 
     } catch (err) { alert(`Error: ${err.message || 'Connection failed'}`); }
@@ -222,10 +240,19 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Connect button */}
+        {/* Connect / Disconnect button */}
         <div className="flex justify-end mb-6">
           <button 
-            onClick={() => wallet ? setWallet('') : setShowWalletModal(true)} 
+            onClick={() => {
+              if (wallet) {
+                // Xóa trạng thái lưu trữ khi bấm ngắt kết nối
+                setWallet('');
+                setSignerInstance(null);
+                localStorage.removeItem('connectedWalletType');
+              } else {
+                setShowWalletModal(true);
+              }
+            }} 
             className="bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700/50 py-3 px-6 rounded-2xl font-mono text-sm shadow-xl transition-all font-bold"
           >
             {wallet ? `🟢 ${wallet.substring(0,6)}...${wallet.substring(38)}` : '🔌 Connect Web3 Wallet'}
@@ -258,12 +285,13 @@ export default function Dashboard() {
                   <div className="text-4xl font-black text-emerald-400 tracking-tight">{poolBalance} <span className="text-lg font-medium">USDC</span></div>
                 </div>
 
+                {/* Đã FIX: Chỉnh text-center cho số lượng đứng giữa đẹp mắt */}
                 <div className="flex items-center justify-between bg-[#05080f] py-4 px-6 rounded-xl border border-slate-800 mb-6">
                   <span className="text-slate-400 text-xs font-bold uppercase">Buy Quantity:</span>
                   <input 
                     type="number" min="1" value={ticketCount} 
                     onChange={(e) => setTicketCount(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="bg-transparent text-white font-black text-2xl text-right w-24 outline-none"
+                    className="bg-transparent text-white font-black text-2xl text-center w-24 outline-none"
                     style={{ appearance: 'textfield', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
                   />
                 </div>
