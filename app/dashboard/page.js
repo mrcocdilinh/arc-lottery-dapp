@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 const CONTRACT_ADDRESS = "0xE0F2C50E2F2A6F91A02De6d9C398088113d9f5B0";
 const ARC_RPC_URL = "https://rpc.testnet.arc.network";
 const ARC_CHAIN_ID = 5042002;
-const ARC_CHAIN_ID_HEX = "0x4CEB92";
+const ARC_CHAIN_ID_HEX = "0x4CEF52"; 
 
 const CONTRACT_ABI = [
   "function buyTickets(uint256 numberOfTickets) public payable",
@@ -116,19 +116,15 @@ export default function Dashboard() {
       const browserProvider = new ethers.BrowserProvider(targetProvider);
       const network = await browserProvider.getNetwork();
       
-      // AUTO ADD & SWITCH NETWORK LOGIC
       if (Number(network.chainId) !== ARC_CHAIN_ID) {
         try {
-          // Thử chuyển mạng trước
           await targetProvider.request({
             method: 'wallet_switchEthereumChain',
             params: [{ chainId: ARC_CHAIN_ID_HEX }],
           });
         } catch (switchError) {
-          // Mã 4902 nghĩa là ví chưa cài đặt mạng này
           if (switchError.code === 4902) {
             try {
-              // Tự động thêm mạng ARC Testnet vào ví người dùng
               await targetProvider.request({
                 method: 'wallet_addEthereumChain',
                 params: [
@@ -265,12 +261,14 @@ export default function Dashboard() {
                   <div className="text-4xl font-black text-emerald-400 tracking-tight">{poolBalance} <span className="text-lg font-medium">USDC</span></div>
                 </div>
 
-                <div className="flex items-center gap-4 bg-[#05080f] p-3 rounded-xl border border-slate-800 mb-6">
-                  <span className="text-slate-400 text-xs font-bold uppercase pl-2">Quantity:</span>
+                {/* ĐÃ FIX: Điều chỉnh lại layout và xóa mũi tên spinner */}
+                <div className="flex items-center justify-between bg-[#05080f] py-4 px-6 rounded-xl border border-slate-800 mb-6">
+                  <span className="text-slate-400 text-xs font-bold uppercase">Quantity:</span>
                   <input 
                     type="number" min="1" value={ticketCount} 
                     onChange={(e) => setTicketCount(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="bg-transparent text-white font-black text-xl text-right flex-1 outline-none pr-2"
+                    className="bg-transparent text-white font-black text-2xl text-right w-24 outline-none"
+                    style={{ appearance: 'textfield', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
                   />
                 </div>
               </div>
