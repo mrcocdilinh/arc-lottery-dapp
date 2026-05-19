@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 const CONTRACT_ADDRESS = "0xE0F2C50E2F2A6F91A02De6d9C398088113d9f5B0";
 const ARC_RPC_URL = "https://rpc.testnet.arc.network";
 const ARC_CHAIN_ID = 5042002;
-const ARC_CHAIN_ID_HEX = "0x4CEF52"; 
+const ARC_CHAIN_ID_HEX = "0x4CEF52";
 
 const CONTRACT_ABI = [
   "function buyTickets(uint256 numberOfTickets) public payable",
@@ -19,11 +19,15 @@ const CONTRACT_ABI = [
 export default function Dashboard() {
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
-  const [activeTab, setActiveTab] = useState('buy'); 
+  const [activeTab, setActiveTab] = useState('classic'); 
   const [loadingState, setLoadingState] = useState(''); 
   const [ticketCount, setTicketCount] = useState(1);
   const [showWalletModal, setShowWalletModal] = useState(false);
 
+  // Mega 6/45 State
+  const [selectedNumbers, setSelectedNumbers] = useState([]);
+
+  // Blockchain States
   const [poolBalance, setPoolBalance] = useState('0.0');
   const [playersList, setPlayersList] = useState([]);
   const [winner, setWinner] = useState('None');
@@ -132,21 +136,13 @@ export default function Dashboard() {
                     chainId: ARC_CHAIN_ID_HEX,
                     chainName: 'Arc Testnet',
                     rpcUrls: [ARC_RPC_URL],
-                    nativeCurrency: {
-                      name: 'USDC',
-                      symbol: 'USDC',
-                      decimals: 18,
-                    },
+                    nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
                     blockExplorerUrls: ['https://explorer.testnet.arc.network'],
                   },
                 ],
               });
-            } catch (addError) {
-              throw addError;
-            }
-          } else {
-            throw switchError;
-          }
+            } catch (addError) { throw addError; }
+          } else { throw switchError; }
         }
       }
 
@@ -159,9 +155,7 @@ export default function Dashboard() {
       setShowWalletModal(false);
       await fetchPublicData();
 
-    } catch (err) {
-      alert(`Error: ${err.message || 'Connection failed'}`);
-    }
+    } catch (err) { alert(`Error: ${err.message || 'Connection failed'}`); }
   };
 
   const handleBuyTickets = async () => {
@@ -172,9 +166,7 @@ export default function Dashboard() {
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
       const totalCost = (0.1 * ticketCount).toFixed(1);
       
-      const tx = await lotto.buyTickets(ticketCount, {
-        value: ethers.parseEther(totalCost.toString())
-      });
+      const tx = await lotto.buyTickets(ticketCount, { value: ethers.parseEther(totalCost.toString()) });
       
       setLoadingState('Mining Block...');
       await tx.wait(); 
@@ -183,9 +175,7 @@ export default function Dashboard() {
       await fetchPublicData();
     } catch (err) {
       alert('Transaction failed or rejected.');
-    } finally {
-      setLoadingState('');
-    }
+    } finally { setLoadingState(''); }
   };
 
   const handleDrawLottery = async () => {
@@ -203,8 +193,14 @@ export default function Dashboard() {
       await fetchPublicData();
     } catch (err) {
       alert('Draw condition not met yet (Timer not zero or Pool is empty).');
-    } finally {
-      setLoadingState('');
+    } finally { setLoadingState(''); }
+  };
+
+  const toggleMegaNumber = (num) => {
+    if (selectedNumbers.includes(num)) {
+      setSelectedNumbers(selectedNumbers.filter(n => n !== num));
+    } else if (selectedNumbers.length < 6) {
+      setSelectedNumbers([...selectedNumbers, num]);
     }
   };
 
@@ -216,13 +212,13 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#070b14] text-white p-4 md:p-8 font-sans antialiased">
       <div className="max-w-4xl mx-auto">
         
-        {/* Title */}
+        {/* Title Rebranded */}
         <div className="text-center mb-8 mt-4">
-          <h1 className="text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 mb-2 tracking-tight">
-            ARC GRAND CASINO
+          <h1 className="text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 mb-2 tracking-tight">
+            ARC DECENTRALIZED LOTTERY
           </h1>
           <p className="text-slate-500 text-sm font-semibold tracking-widest uppercase">
-            100% Transparent On-Chain Ecosystem
+            Fair, Transparent, and fully On-Chain
           </p>
         </div>
 
@@ -236,34 +232,34 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Navigation */}
+        {/* Main Navigation */}
         <div className="flex gap-2 p-1.5 bg-[#0f172a]/80 border border-slate-800 rounded-2xl mb-8 overflow-x-auto">
-          <button onClick={() => setActiveTab('buy')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all ${activeTab === 'buy' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🛒 BUY TICKETS</button>
-          <button onClick={() => setActiveTab('history')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all ${activeTab === 'history' ? 'bg-gradient-to-r from-fuchsia-500 to-pink-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>📜 GLOBAL HISTORY</button>
-          <button onClick={() => setActiveTab('my-tickets')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all ${activeTab === 'my-tickets' ? 'bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-900 shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🎫 MY TICKETS</button>
+          <button onClick={() => setActiveTab('classic')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'classic' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>⏱️ CLASSIC DRAW</button>
+          <button onClick={() => setActiveTab('mega')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'mega' ? 'bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🎯 MEGA 6/45</button>
+          <button onClick={() => setActiveTab('scratch')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'scratch' ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🎟️ SCRATCH CARDS</button>
+          <button onClick={() => setActiveTab('ledger')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'ledger' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>📜 TRANSPARENCY LEDGER</button>
         </div>
 
-        {/* Tab 1 */}
-        {activeTab === 'buy' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Tab 1: Classic Lottery */}
+        {activeTab === 'classic' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
             <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-6 shadow-2xl flex flex-col justify-between">
               <div>
-                <h2 className="text-2xl font-black text-cyan-400 mb-1">Arc Classic</h2>
-                <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-6">Price: 0.1 USDC / Ticket</p>
+                <h2 className="text-2xl font-black text-cyan-400 mb-1">Hourly Classic Draw</h2>
+                <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-6">Ticket Price: 0.1 USDC</p>
                 
                 <div className="bg-[#05080f] border border-slate-800/50 rounded-2xl p-4 mb-5 flex flex-col items-center justify-center">
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-1">Next Draw Countdown</p>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-1">Time until next draw</p>
                   <div className="text-3xl font-black text-amber-400 font-mono tracking-wider">{timeLeft}</div>
                 </div>
 
                 <div className="bg-gradient-to-b from-teal-950/20 to-emerald-950/20 border border-emerald-500/20 rounded-2xl p-5 mb-6 text-center">
-                  <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Current Prize Pool</p>
+                  <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Current Jackpot Pool</p>
                   <div className="text-4xl font-black text-emerald-400 tracking-tight">{poolBalance} <span className="text-lg font-medium">USDC</span></div>
                 </div>
 
-                {/* ĐÃ FIX: Điều chỉnh lại layout và xóa mũi tên spinner */}
                 <div className="flex items-center justify-between bg-[#05080f] py-4 px-6 rounded-xl border border-slate-800 mb-6">
-                  <span className="text-slate-400 text-xs font-bold uppercase">Quantity:</span>
+                  <span className="text-slate-400 text-xs font-bold uppercase">Buy Quantity:</span>
                   <input 
                     type="number" min="1" value={ticketCount} 
                     onChange={(e) => setTicketCount(Math.max(1, parseInt(e.target.value) || 1))}
@@ -276,98 +272,144 @@ export default function Dashboard() {
               <div>
                 <button 
                   onClick={handleBuyTickets} disabled={!!loadingState}
-                  className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black py-4 rounded-xl shadow-xl transition-all mb-3 text-sm tracking-wider"
+                  className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black py-4 rounded-xl shadow-xl transition-all mb-3 text-sm tracking-wider uppercase"
                 >
-                  {loadingState ? loadingState : `CONFIRM PURCHASE (${(0.1 * ticketCount).toFixed(1)} USDC)`}
+                  {loadingState ? loadingState : `Confirm Purchase (${(0.1 * ticketCount).toFixed(1)} USDC)`}
                 </button>
                 <button 
                   onClick={handleDrawLottery} disabled={!!loadingState}
-                  className="w-full bg-transparent border border-slate-700 hover:bg-slate-800 font-bold py-3 rounded-xl transition-all text-xs text-amber-400"
+                  className="w-full bg-transparent border border-slate-700 hover:bg-slate-800 font-bold py-3 rounded-xl transition-all text-xs text-amber-400 uppercase tracking-widest"
                 >
-                  TRIGGER LUCKY DRAW
+                  Trigger Blockchain Draw
                 </button>
               </div>
             </div>
 
             <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-6 shadow-2xl flex flex-col items-center justify-center text-center">
-               <div className="text-7xl mb-4">🎰</div>
-               <h3 className="text-xl font-bold text-slate-300 mb-2">Smart Contract Security</h3>
-               <p className="text-slate-500 text-sm">All draw algorithms and fund distributions are processed on-chain. Zero house manipulation risk. Verifiable on Arc Explorer.</p>
+               <div className="text-7xl mb-4">🎫</div>
+               <h3 className="text-xl font-bold text-slate-300 mb-2">Fair Play Guaranteed</h3>
+               <p className="text-slate-500 text-sm">Our smart contracts utilize unmanipulable on-chain randomness. Funds are locked securely and distributed automatically to the winner.</p>
             </div>
           </div>
         )}
 
-        {/* Tab 2 */}
-        {activeTab === 'history' && (
-          <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-fuchsia-400">Global Ledger</h2>
-              <span className="bg-slate-800 px-3 py-1 rounded-full text-xs font-bold text-slate-400">Total: {playersList.length} tickets</span>
-            </div>
-            
-            <div className="mb-6 bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
-              <p className="text-amber-500/80 text-xs uppercase font-black mb-1 tracking-wide">👑 Previous Round Winner:</p>
-              <div className="font-mono text-sm text-amber-400 break-all">{winner}</div>
-            </div>
-
-            <p className="text-slate-500 text-xs uppercase font-black mb-3 tracking-wide">Active Tickets (Current Round):</p>
-            <div className="bg-[#05080f] border border-slate-800/80 rounded-2xl p-4 overflow-y-auto max-h-[400px] space-y-2">
-              {playersList.length === 0 ? (
-                <p className="text-slate-600 text-sm italic text-center mt-10 mb-10">No tickets purchased in this round yet.</p>
-              ) : (
-                playersList.map((player, index) => (
-                  <div key={index} className="flex flex-col sm:flex-row sm:justify-between sm:items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800/50">
-                    <span className="text-slate-400 text-sm font-bold mb-1 sm:mb-0">Ticket #{index + 1}</span>
-                    <span className="text-cyan-400 font-mono text-xs sm:text-sm break-all">{player}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+        {/* Tab 2: Mega 6/45 */}
+        {activeTab === 'mega' && (
+           <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-8 shadow-2xl text-center animate-fadeIn">
+             <h2 className="text-3xl font-black text-fuchsia-400 mb-2">Mega 6/45 Jackpot</h2>
+             <p className="text-slate-500 text-sm mb-8">Select 6 lucky numbers. Match them all to win the grand multi-million pool. (Contract integration pending)</p>
+             
+             <div className="grid grid-cols-5 md:grid-cols-9 gap-3 mb-8 max-w-2xl mx-auto">
+               {Array.from({length: 45}, (_, i) => i + 1).map(num => (
+                 <button 
+                   key={num} onClick={() => toggleMegaNumber(num)}
+                   className={`aspect-square rounded-full font-bold text-lg flex items-center justify-center transition-all transform hover:scale-110 ${selectedNumbers.includes(num) ? 'bg-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/50 scale-110' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-slate-700'}`}
+                 >
+                   {num}
+                 </button>
+               ))}
+             </div>
+             <div className="bg-[#05080f] p-4 rounded-xl border border-slate-800 inline-block">
+               <span className="text-slate-500 uppercase text-xs font-bold mr-4">Your Selection ({selectedNumbers.length}/6):</span>
+               <span className="font-mono text-fuchsia-400 font-bold text-xl">{selectedNumbers.length > 0 ? selectedNumbers.sort((a,b)=>a-b).join(' - ') : '--'}</span>
+             </div>
+             
+             <div className="mt-8">
+               <button disabled className="bg-slate-800 text-slate-500 px-8 py-4 rounded-xl font-black tracking-wider uppercase cursor-not-allowed">
+                 Submit Entry (Coming Soon)
+               </button>
+             </div>
+           </div>
         )}
 
-        {/* Tab 3 */}
-        {activeTab === 'my-tickets' && (
-          <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
-            <h2 className="text-2xl font-black text-emerald-400 mb-2">My Inventory</h2>
-            <p className="text-slate-500 text-sm mb-6">Track your active ticket entries for the current draw.</p>
+        {/* Tab 3: Scratch Cards */}
+        {activeTab === 'scratch' && (
+           <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-8 shadow-2xl text-center flex flex-col items-center animate-fadeIn">
+             <h2 className="text-3xl font-black text-amber-400 mb-2">Instant Scratch Cards</h2>
+             <p className="text-slate-500 text-sm mb-12">Experience sub-second blockchain finality. Buy, scratch, and reveal your prize instantly.</p>
+             
+             <div className="bg-gradient-to-br from-amber-400 to-orange-600 p-1.5 rounded-3xl w-72 h-72 cursor-pointer transform hover:rotate-2 hover:scale-105 transition-all shadow-2xl shadow-orange-500/20">
+               <div className="bg-[#05080f] w-full h-full rounded-[20px] flex flex-col items-center justify-center border-4 border-dashed border-amber-500/30">
+                 <span className="text-amber-500 font-black text-3xl uppercase tracking-widest mb-2">Scratch</span>
+                 <span className="text-slate-600 font-bold text-sm uppercase">To Reveal</span>
+               </div>
+             </div>
+             <p className="text-slate-500 text-xs uppercase tracking-widest mt-12 font-bold">Smart Contract Currently in Audit</p>
+           </div>
+        )}
 
-            {!wallet ? (
-              <div className="bg-[#05080f] p-10 rounded-2xl border border-slate-800 text-center">
-                <p className="text-slate-400 mb-4">Please connect your wallet to view history.</p>
-                <button onClick={() => setShowWalletModal(true)} className="bg-emerald-500 text-slate-900 font-bold py-2 px-6 rounded-lg">Connect Now</button>
+        {/* Tab 4: Ledger & History */}
+        {activeTab === 'ledger' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
+            {/* Global History */}
+            <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-black text-emerald-400">Global Ledger</h2>
+                <span className="bg-slate-800 px-3 py-1 rounded-full text-xs font-bold text-slate-400">Total: {playersList.length} tickets</span>
               </div>
-            ) : (
-              <div>
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
-                    <p className="text-slate-500 text-xs font-bold uppercase">Total Owned</p>
-                    <p className="text-3xl font-black text-white">{myTicketIndexes.length}</p>
-                  </div>
-                  <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
-                    <p className="text-slate-500 text-xs font-bold uppercase">Win Probability</p>
-                    <p className="text-3xl font-black text-emerald-400">
-                      {playersList.length > 0 ? ((myTicketIndexes.length / playersList.length) * 100).toFixed(1) : 0}%
-                    </p>
-                  </div>
-                </div>
+              
+              <div className="mb-6 bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
+                <p className="text-amber-500/80 text-xs uppercase font-black mb-1 tracking-wide">👑 Previous Round Winner:</p>
+                <div className="font-mono text-sm text-amber-400 break-all">{winner}</div>
+              </div>
 
-                <p className="text-slate-500 text-xs uppercase font-black mb-3 tracking-wide">Your Ticket Numbers:</p>
-                {myTicketIndexes.length === 0 ? (
-                  <div className="bg-[#05080f] p-8 rounded-2xl border border-slate-800 text-center">
-                    <p className="text-slate-500 italic">You have 0 tickets in this round.</p>
-                  </div>
+              <p className="text-slate-500 text-xs uppercase font-black mb-3 tracking-wide">Active Tickets (Current Round):</p>
+              <div className="bg-[#05080f] border border-slate-800/80 rounded-2xl p-4 overflow-y-auto h-[250px] space-y-2">
+                {playersList.length === 0 ? (
+                  <p className="text-slate-600 text-sm italic text-center mt-10">No tickets purchased in this round yet.</p>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                    {myTicketIndexes.map(idx => (
-                      <div key={idx} className="bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 py-3 rounded-xl text-center font-black text-emerald-400 font-mono shadow-inner">
-                        #{idx}
-                      </div>
-                    ))}
-                  </div>
+                  playersList.map((player, index) => (
+                    <div key={index} className="flex justify-between items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800/50">
+                      <span className="text-slate-400 text-xs font-bold">#{index + 1}</span>
+                      <span className="text-cyan-400 font-mono text-xs truncate ml-2">{player}</span>
+                    </div>
+                  ))
                 )}
               </div>
-            )}
+            </div>
+
+            {/* My Tickets */}
+            <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
+              <h2 className="text-2xl font-black text-emerald-400 mb-2">My Inventory</h2>
+              <p className="text-slate-500 text-sm mb-6">Track your active entries.</p>
+
+              {!wallet ? (
+                <div className="bg-[#05080f] p-10 rounded-2xl border border-slate-800 text-center mt-10">
+                  <p className="text-slate-400 mb-4 text-sm">Please connect your wallet to view history.</p>
+                  <button onClick={() => setShowWalletModal(true)} className="bg-emerald-500 text-slate-900 font-bold py-2 px-6 rounded-lg text-sm">Connect Now</button>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
+                      <p className="text-slate-500 text-xs font-bold uppercase">Total Owned</p>
+                      <p className="text-3xl font-black text-white">{myTicketIndexes.length}</p>
+                    </div>
+                    <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 text-center">
+                      <p className="text-slate-500 text-xs font-bold uppercase">Win Chance</p>
+                      <p className="text-3xl font-black text-emerald-400">
+                        {playersList.length > 0 ? ((myTicketIndexes.length / playersList.length) * 100).toFixed(1) : 0}%
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-slate-500 text-xs uppercase font-black mb-3 tracking-wide">Your Ticket Numbers:</p>
+                  {myTicketIndexes.length === 0 ? (
+                    <div className="bg-[#05080f] p-6 rounded-2xl border border-slate-800 text-center">
+                      <p className="text-slate-500 italic text-sm">You have 0 tickets in this round.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 md:grid-cols-4 gap-3 max-h-[150px] overflow-y-auto">
+                      {myTicketIndexes.map(idx => (
+                        <div key={idx} className="bg-emerald-500/10 border border-emerald-500/40 py-2 rounded-xl text-center font-black text-emerald-400 font-mono shadow-inner text-sm">
+                          #{idx}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
