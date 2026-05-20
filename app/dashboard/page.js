@@ -5,7 +5,6 @@ import { ethers } from 'ethers';
 // --- CONTRACT ADDRESSES ---
 const CLASSIC_ADDRESS = "0xE0F2C50E2F2A6F91A02De6d9C398088113d9f5B0";
 const MEGA_ADDRESS = "0x9A394437782F422C0B04416deCC21cDce0392bA4";
-
 const ARC_RPC_URL = "https://rpc.testnet.arc.network";
 const ARC_CHAIN_ID = 5042002;
 const ARC_CHAIN_ID_HEX = "0x4CEF52";
@@ -35,6 +34,7 @@ const MEGA_ABI = [
 ];
 
 export default function Dashboard() {
+  const [mounted, setMounted] = useState(false);
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('classic'); 
@@ -49,7 +49,6 @@ export default function Dashboard() {
 
   const formatAddr = (addr) => addr ? `${addr.substring(0, 6)}xxxx${addr.substring(addr.length - 4)}` : '';
 
-  // Helper: Format UTC Date Code (YYYYMMDD-H)
   const formatUtcRoundCode = (timestamp) => {
     if (!timestamp) return 'UNKNOWN';
     const d = new Date(timestamp * 1000);
@@ -66,6 +65,7 @@ export default function Dashboard() {
   const [classicPlayersList, setClassicPlayersList] = useState([]);
   const [classicHistoricalWinners, setClassicHistoricalWinners] = useState([]);
   const [classicNextDrawCode, setClassicNextDrawCode] = useState('');
+  const [classicNextDrawTime, setClassicNextDrawTime] = useState(0);
 
   // --- MEGA STATE ---
   const [megaSelectedNumbers, setMegaSelectedNumbers] = useState([]);
@@ -73,13 +73,17 @@ export default function Dashboard() {
   const [megaPoolBalance, setMegaPoolBalance] = useState('0.0');
   const [megaSeedPoolBalance, setMegaSeedPoolBalance] = useState('0.0');
   const [megaNextDrawCode, setMegaNextDrawCode] = useState('');
+  const [megaCurrentRound, setMegaCurrentRound] = useState(1);
   const [megaTicketsCountThisRound, setMegaTicketsCountThisRound] = useState(0);
   const [megaHistoryLogs, setMegaHistoryLogs] = useState([]);
   const [myMegaTickets, setMyMegaTickets] = useState([]);
 
   // --- STRICT UTC CLOCK FOR ALL DRAWS ---
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
+  
   useEffect(() => {
+    setMounted(true);
+    setNow(Date.now());
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(clock);
   }, []);
@@ -98,7 +102,7 @@ export default function Dashboard() {
   }
 
   // Mega Clock (Strict UTC Hour)
-  const currentUtc = new Date(now);
+  const currentUtc = new Date(now || Date.now());
   const nextUtcHour = new Date(currentUtc);
   nextUtcHour.setUTCHours(currentUtc.getUTCHours() + 1, 0, 0, 0);
   const diffMegaUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
@@ -117,6 +121,7 @@ export default function Dashboard() {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       
+      // Fetch Classic
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
       setClassicPoolBalance(ethers.formatEther(await classicContract.getPoolBalance()));
       setClassicPlayersList(await classicContract.getPlayers());
@@ -133,12 +138,14 @@ export default function Dashboard() {
         }).reverse());
       } catch (e) { console.error("Classic logs error", e); }
 
+      // Fetch Mega
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
       setMegaPoolBalance(ethers.formatEther(await megaContract.jackpotPool()));
       setMegaSeedPoolBalance(ethers.formatEther(await megaContract.seedPool()));
       
       const mRound = Number(await megaContract.currentRound());
       const mLastTime = Number(await megaContract.lastDrawTime());
+      setMegaCurrentRound(mRound);
       setMegaNextDrawCode(formatUtcRoundCode(mLastTime + 3600));
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
@@ -171,7 +178,8 @@ export default function Dashboard() {
            }).reverse());
          } catch(e) { console.error(e); }
       }
-    } catch (err) { console.error("Fetch Data Critical Error:", err); }
+
+    } catch (err) { console.error("Fetch Data Error:", err); }
   };
 
   useEffect(() => {
@@ -179,17 +187,11 @@ export default function Dashboard() {
     const autoReconnect = async () => {
       const savedWalletType = localStorage.getItem('connectedWalletType');
       if (!savedWalletType || typeof window === 'undefined') return;
-      let targetProvider = null;
-      if (savedWalletType === 'okx' && window.okxwallet) targetProvider = window.okxwallet;
-      else if (savedWalletType === 'binance' && window.BinanceChain) targetProvider = window.BinanceChain;
-      else if (savedWalletType === 'trust' && window.trustwallet) targetProvider = window.trustwallet;
-      else if (window.ethereum) targetProvider = window.ethereum;
-
-      if (targetProvider) {
+      if (window.ethereum) {
         try {
-          const accounts = await targetProvider.request({ method: 'eth_accounts' });
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
           if (accounts && accounts.length > 0) {
-            const browserProvider = new ethers.BrowserProvider(targetProvider);
+            const browserProvider = new ethers.BrowserProvider(window.ethereum);
             setWallet(accounts[0]);
             setSignerInstance(await browserProvider.getSigner());
           } else { localStorage.removeItem('connectedWalletType'); }
@@ -201,34 +203,30 @@ export default function Dashboard() {
 
   useEffect(() => { if (wallet) fetchAllBlockchainData(); }, [wallet]);
 
-  const connectWallet = async (walletType) => {
-    let targetProvider = null;
-    if (typeof window !== 'undefined') {
-      if (walletType === 'okx' && window.okxwallet) targetProvider = window.okxwallet;
-      else if (walletType === 'binance' && window.BinanceChain) targetProvider = window.BinanceChain;
-      else if (walletType === 'trust' && window.trustwallet) targetProvider = window.trustwallet;
-      else if (window.ethereum) targetProvider = window.ethereum;
-    }
-    if (!targetProvider) return showToast("No Web3 wallet extension detected!", "error");
-    try {
-      await targetProvider.request({ method: 'eth_requestAccounts' });
-      const browserProvider = new ethers.BrowserProvider(targetProvider);
-      const network = await browserProvider.getNetwork();
-      if (Number(network.chainId) !== ARC_CHAIN_ID) {
-        try { await targetProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX }] }); } 
-        catch (e) {
-          if (e.code === 4902) {
-            await targetProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX, chainName: 'Arc Testnet', rpcUrls: [ARC_RPC_URL], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://explorer.testnet.arc.network'] }] });
-          } else { throw e; }
+  const connectWallet = async () => {
+    if (typeof window !== 'undefined' && window.ethereum) {
+      try {
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const browserProvider = new ethers.BrowserProvider(window.ethereum);
+        const network = await browserProvider.getNetwork();
+        if (Number(network.chainId) !== ARC_CHAIN_ID) {
+          try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX }] }); } 
+          catch (e) {
+            if (e.code === 4902) {
+              await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX, chainName: 'Arc Testnet', rpcUrls: [ARC_RPC_URL], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://explorer.testnet.arc.network'] }] });
+            } else { throw e; }
+          }
         }
-      }
-      const signer = await (new ethers.BrowserProvider(targetProvider)).getSigner();
-      setWallet(await signer.getAddress());
-      setSignerInstance(signer);
-      setShowWalletModal(false);
-      localStorage.setItem('connectedWalletType', walletType);
-      showToast("Wallet connected successfully!", "success");
-    } catch (err) { showToast(err.message, "error"); }
+        const signer = await browserProvider.getSigner();
+        setWallet(await signer.getAddress());
+        setSignerInstance(signer);
+        setShowWalletModal(false);
+        localStorage.setItem('connectedWalletType', 'browser');
+        showToast("Wallet connected successfully!", "success");
+      } catch (err) { showToast(err.message, "error"); }
+    } else {
+      showToast("No Web3 wallet extension detected!", "error");
+    }
   };
 
   const handleBuyClassicTickets = async () => {
@@ -264,7 +262,7 @@ export default function Dashboard() {
      if (megaSelectedNumbers.length !== 3) return showToast('Select exactly 3 numbers!', 'error');
      setMegaCart([...megaCart, [...megaSelectedNumbers].sort((a, b) => a - b)]);
      setMegaSelectedNumbers([]);
-     showToast('Added 1 ticket to cart!', 'success');
+     showToast('Added ticket to cart!', 'success');
   };
 
   const removeFromCart = (indexToRemove) => setMegaCart(megaCart.filter((_, index) => index !== indexToRemove));
@@ -300,10 +298,13 @@ export default function Dashboard() {
     } catch { showToast('Draw condition not met.', 'error'); } finally { setLoadingState(''); }
   };
 
+  if (!mounted) return null;
+
   const myMegaWinsCount = myMegaTickets.filter(t => megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers)).length;
   const myClassicWinsCount = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length;
   const myClassicWinnings = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).reduce((acc, curr) => acc + parseFloat(curr.prize), 0);
   const myClassicTicketsThisRound = classicPlayersList.map((p, i) => (wallet && p.toLowerCase() === wallet.toLowerCase() ? i + 1 : null)).filter(i => i !== null);
+
   return (
     <div className="min-h-screen bg-[#050810] text-white p-4 md:p-8 font-sans antialiased relative overflow-hidden">
       <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-cyan-600/15 blur-[120px] rounded-full pointer-events-none z-0"></div>
@@ -322,7 +323,6 @@ export default function Dashboard() {
           <p className="text-cyan-400/80 text-sm font-bold tracking-[0.3em] uppercase">Fair • Transparent • On-Chain</p>
         </div>
 
-        {/* Wallet Connetor */}
         <div className="flex justify-end mb-8">
           {wallet ? (
             <div className="flex items-center gap-3">
@@ -332,11 +332,10 @@ export default function Dashboard() {
               <button onClick={() => { setWallet(''); setSignerInstance(null); localStorage.removeItem('connectedWalletType'); }} className="bg-rose-500/10 hover:bg-rose-500/20 transition-colors text-rose-400 py-3 px-5 rounded-2xl font-bold text-sm border border-rose-500/30">Log Out</button>
             </div>
           ) : (
-            <button onClick={() => setShowWalletModal(true)} className="bg-gradient-to-r from-cyan-600 to-blue-700 py-3 px-8 rounded-2xl font-mono text-sm font-bold shadow-[0_0_20px_rgba(6,182,212,0.3)]">Connect Wallet</button>
+            <button onClick={() => setShowWalletModal(true)} className="bg-gradient-to-r from-blue-600 to-indigo-700 py-3 px-8 rounded-2xl font-mono text-sm font-bold shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:scale-105 transition-transform">Connect Wallet</button>
           )}
         </div>
 
-        {/* Main Navigation Tabs */}
         <div className="flex gap-3 p-2 bg-[#0b1221]/80 backdrop-blur-md border border-slate-800/80 rounded-3xl mb-10 overflow-x-auto">
           <button onClick={() => setActiveTab('classic')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'classic' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30' : 'text-slate-500 hover:bg-slate-800/50'}`}>CLASSIC DRAW</button>
           <button onClick={() => setActiveTab('mega')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'mega' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/30' : 'text-slate-500 hover:bg-slate-800/50'}`}>MEGA JACKPOT 3/45</button>
@@ -347,7 +346,6 @@ export default function Dashboard() {
         {/* TAB 1: CLASSIC DRAW */}
         {activeTab === 'classic' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
-            {/* Top 2 Columns */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-full">
                 <div>
@@ -357,7 +355,7 @@ export default function Dashboard() {
                   </div>
                   <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 text-center">
                     <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next UTC draw</p>
-                    <div className="text-4xl font-black text-amber-400 font-mono">{globalTimeLeft}</div>
+                    <div className="text-4xl font-black text-amber-400 font-mono">{classicTimeLeft}</div>
                   </div>
                   <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center">
                     <p className="text-emerald-500/80 text-[10px] font-bold uppercase mb-2">Current Jackpot Pool</p>
@@ -369,7 +367,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="space-y-3 mt-auto">
-                  <button onClick={handleBuyClassicTickets} disabled={!!loadingState || isClassicReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-md uppercase tracking-wider text-sm transition-all ${isClassicReadyToDraw ? "bg-slate-800 cursor-not-allowed" : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-90"}`}>
+                  <button onClick={handleBuyClassicTickets} disabled={!!loadingState || isClassicReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-md uppercase tracking-wider text-sm transition-all ${isClassicReadyToDraw ? "bg-slate-800 cursor-not-allowed text-slate-500" : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-90"}`}>
                     {loadingState ? loadingState : (isClassicReadyToDraw ? "DRAW REQUIRED FIRST" : `Confirm Purchase (${(0.1 * classicTicketCount).toFixed(1)} USDC)`)}
                   </button>
                   <div className="text-center">
@@ -400,13 +398,12 @@ export default function Dashboard() {
               </div>
             </div>
             
-            {/* Bottom Full-width: Global Classic History */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">Global Classic History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Past Winners Overview</p>
               <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
                 {classicHistoricalWinners.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No history found.</p> : classicHistoricalWinners.map((data, index) => (
-                  <div key={index} className="flex justify-between items-center bg-[#0b1221] p-4 rounded-2xl border border-slate-800/50">
+                  <div key={index} className="flex justify-between items-center bg-[#0b1221] p-4 rounded-2xl border border-slate-800/50 hover:border-cyan-500/30 transition-colors">
                     <div>
                       <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black uppercase px-3 py-1 rounded-full">{data.roundCode}</span>
                       <p className="text-sm font-mono text-slate-400 mt-2">Winner: <span className="text-white">{formatAddr(data.winner)}</span></p>
@@ -422,7 +419,6 @@ export default function Dashboard() {
         {/* TAB 2: MEGA JACKPOT 3/45 */}
         {activeTab === 'mega' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
-            {/* Top 2 Columns */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 h-full min-h-[500px]">
                 <div>
@@ -485,7 +481,7 @@ export default function Dashboard() {
                     <span className="text-slate-400 font-bold uppercase text-[10px]">Total Checkout:</span>
                     <span className="text-2xl font-black text-fuchsia-400">{megaCart.length.toFixed(1)} USDC</span>
                   </div>
-                  <button onClick={handleCheckoutMegaCart} disabled={!!loadingState || megaCart.length === 0 || isMegaReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-lg uppercase text-sm mb-3 transition-all ${isMegaReadyToDraw || megaCart.length === 0 ? "bg-slate-800 cursor-not-allowed opacity-50" : "bg-gradient-to-r from-fuchsia-500 to-purple-600 hover:opacity-90"}`}>
+                  <button onClick={handleCheckoutMegaCart} disabled={!!loadingState || megaCart.length === 0 || isMegaReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-lg uppercase text-sm mb-3 transition-all ${isMegaReadyToDraw || megaCart.length === 0 ? "bg-slate-800 cursor-not-allowed opacity-50 text-slate-500" : "bg-gradient-to-r from-fuchsia-500 to-purple-600 hover:opacity-90"}`}>
                     {loadingState ? loadingState : (isMegaReadyToDraw ? "DRAW REQUIRED FIRST" : "CHECKOUT ALL TICKETS")}
                   </button>
                   <div className="text-center">
@@ -498,13 +494,12 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Bottom Full-width: Global Mega History */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">Global Mega History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Rollover & Win Activity</p>
               <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
                 {megaHistoryLogs.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No logs found.</p> : megaHistoryLogs.map((log, index) => (
-                  <div key={index} className={`bg-[#0b1221] p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${log.status === 'WIN' ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-amber-500/20'}`}>
+                  <div key={index} className={`bg-[#0b1221] p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all hover:border-fuchsia-500/30 ${log.status === 'WIN' ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-amber-500/20'}`}>
                     <div className="flex flex-col gap-2 w-full md:w-auto">
                       <span className={`w-max text-[10px] font-black uppercase px-3 py-1 rounded-full border ${log.status === 'WIN' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
                         {log.roundCode} - {log.status}
@@ -543,7 +538,6 @@ export default function Dashboard() {
         {activeTab === 'ledger' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
             
-            {/* My Mega Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Picks & Wins</p>
@@ -576,7 +570,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* My Classic Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
@@ -593,7 +586,7 @@ export default function Dashboard() {
                      </div>
                   </div>
                   <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-2 custom-scrollbar">
-                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
+                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
                       <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
                         <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
                         <span className="text-emerald-400 text-xs font-black">+{h.prize} USDC</span>
@@ -609,19 +602,46 @@ export default function Dashboard() {
 
       </div>
 
-      {/* Wallet Selector Modal Pop-up */}
+      {/* RAINBOWKIT / WEB3MODAL STYLE WALLET SELECTOR */}
       {showWalletModal && (
-        <div className="fixed inset-0 bg-[#050810]/90 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-[#0b1221] border border-slate-700/50 rounded-[40px] max-w-sm w-full p-8 shadow-2xl">
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-black text-white">Connect</h3>
-              <button onClick={() => setShowWalletModal(false)} className="bg-[#050810] text-slate-400 hover:text-white w-10 h-10 rounded-full font-bold">✕</button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-[#1a1b1f] border border-gray-800 rounded-[24px] max-w-sm w-full shadow-2xl overflow-hidden font-sans">
+            <div className="flex justify-between items-center p-5 border-b border-gray-800/50">
+              <h3 className="text-lg font-bold text-white tracking-tight">Connect a Wallet</h3>
+              <button onClick={() => setShowWalletModal(false)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 w-8 h-8 rounded-full flex items-center justify-center transition-colors">✕</button>
             </div>
-            <div className="space-y-4">
-              <button onClick={() => connectWallet('okx')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 group">OKX Wallet</button>
-              <button onClick={() => connectWallet('binance')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 group">Binance Web3</button>
-              <button onClick={() => connectWallet('trust')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 group">Trust Wallet</button>
-              <button onClick={() => connectWallet('browser')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 group">Browser Extension</button>
+            
+            <div className="p-3 space-y-4 mt-2">
+              <div>
+                <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 px-3">Installed</p>
+                <button onClick={connectWallet} className="w-full flex items-center gap-4 p-3 rounded-2xl hover:bg-gray-800/80 transition-colors group">
+                  <div className="w-11 h-11 bg-white rounded-[14px] flex items-center justify-center overflow-hidden shrink-0 shadow-inner">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" alt="MetaMask" className="w-8 h-8 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <span className="text-white font-bold text-[17px]">MetaMask</span>
+                </button>
+              </div>
+
+              <div>
+                <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 px-3 mt-1">Popular</p>
+                <button onClick={connectWallet} className="w-full flex items-center gap-4 p-3 rounded-2xl hover:bg-gray-800/80 transition-colors group">
+                  <div className="w-11 h-11 bg-blue-500 rounded-[14px] flex items-center justify-center shrink-0">
+                    <svg className="w-6 h-6 text-white group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
+                  </div>
+                  <span className="text-white font-bold text-[17px]">Browser Wallet</span>
+                </button>
+                <button onClick={connectWallet} className="w-full flex items-center gap-4 p-3 rounded-2xl hover:bg-gray-800/80 transition-colors group">
+                  <div className="w-11 h-11 bg-blue-600 rounded-[14px] flex items-center justify-center shrink-0">
+                    <svg className="w-6 h-6 text-white group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  </div>
+                  <span className="text-white font-bold text-[17px]">Trust Wallet</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-800/30 flex justify-between items-center mt-2 border-t border-gray-800/50">
+              <span className="text-gray-400 text-sm font-medium">New to Ethereum wallets?</span>
+              <button className="text-blue-500 text-sm font-bold hover:text-blue-400 transition-colors">Learn More</button>
             </div>
           </div>
         </div>
