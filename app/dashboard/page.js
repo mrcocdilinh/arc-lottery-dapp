@@ -62,8 +62,10 @@ export default function Dashboard() {
   };
 
   const formatNumbersSafe = (arr) => {
-    try { return Array.from(arr).map(n => Number(n).toString().padStart(2, '0')).join(' - '); } 
-    catch(e) { return 'N/A'; }
+    try { 
+      // Xử lý an toàn tuyệt đối mảng BigInt của Ethers v6
+      return `${Number(arr[0]).toString().padStart(2, '0')} - ${Number(arr[1]).toString().padStart(2, '0')} - ${Number(arr[2]).toString().padStart(2, '0')}`;
+    } catch(e) { return 'N/A'; }
   };
 
   // --- CLASSIC STATE ---
@@ -80,6 +82,7 @@ export default function Dashboard() {
   const [megaPoolBalance, setMegaPoolBalance] = useState('0.0');
   const [megaSeedPoolBalance, setMegaSeedPoolBalance] = useState('0.0');
   const [megaNextDrawCode, setMegaNextDrawCode] = useState('');
+  const [megaNextDrawTime, setMegaNextDrawTime] = useState(0); // Sửa đồng bộ với Smart Contract
   const [megaCurrentRound, setMegaCurrentRound] = useState(1);
   const [megaTicketsCountThisRound, setMegaTicketsCountThisRound] = useState(0);
   const [megaHistoryLogs, setMegaHistoryLogs] = useState([]);
@@ -92,7 +95,7 @@ export default function Dashboard() {
     return () => clearInterval(clock);
   }, []);
 
-  // --- BLOCKCHAIN FETCH ENGINE ---
+  // --- FETCH BLOCKCHAIN DATA ---
   const fetchAllBlockchainData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
@@ -100,6 +103,7 @@ export default function Dashboard() {
       let fromBlock = currentBlock - 100000; 
       if (fromBlock < 0) fromBlock = 0;
       
+      // FETCH CLASSIC
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
       setClassicPoolBalance(ethers.formatEther(await classicContract.getPoolBalance()));
       setClassicPlayersList(await classicContract.getPlayers());
@@ -114,8 +118,9 @@ export default function Dashboard() {
           const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
           return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
         }).reverse());
-      } catch (e) { console.error("Classic history parse error", e); }
+      } catch (e) { console.error("Classic logs error", e); }
 
+      // FETCH MEGA
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
       setMegaPoolBalance(ethers.formatEther(await megaContract.jackpotPool()));
       setMegaSeedPoolBalance(ethers.formatEther(await megaContract.seedPool()));
@@ -123,6 +128,7 @@ export default function Dashboard() {
       const mRound = Number(await megaContract.currentRound());
       const mLastTime = Number(await megaContract.lastDrawTime());
       setMegaCurrentRound(mRound);
+      setMegaNextDrawTime(mLastTime + 3600); // ĐỒNG BỘ THỜI GIAN THỰC TẾ CỦA SMART CONTRACT
       setMegaNextDrawCode(formatUtcRoundCode(mLastTime + 3600));
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
@@ -143,7 +149,7 @@ export default function Dashboard() {
           compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
         });
         setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
-      } catch (e) { console.error("Mega history parse error", e); }
+      } catch (e) { console.error("Mega logs error", e); }
 
       if (wallet) {
          try {
@@ -151,9 +157,9 @@ export default function Dashboard() {
            setMyMegaTickets(myTicketLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: Array.from(e.args[2]).map(n => Number(n).toString().padStart(2, '0')).join(' - ') };
+             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: formatNumbersSafe(e.args[2]) };
            }).reverse());
-         } catch(e) { console.error(e); }
+         } catch(e) { console.error("My tickets fetch error", e); }
       }
 
     } catch (err) { console.error("Fetch Data Error:", err); }
@@ -182,7 +188,7 @@ export default function Dashboard() {
 
   if (!mounted || !now) return null;
 
-  // Real-time clock ticks
+  // --- TIME CALCULATIONS (SYNCED WITH SMART CONTRACTS) ---
   const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
   let isClassicReadyToDraw = false;
   let classicTimeLeft = "Syncing...";
@@ -191,15 +197,13 @@ export default function Dashboard() {
     else { classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`; }
   }
 
-  const currentUtc = new Date(now);
-  const nextUtcHour = new Date(currentUtc);
-  nextUtcHour.setUTCHours(currentUtc.getUTCHours() + 1, 0, 0, 0);
-  const diffMegaUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
-  
+  const diffMega = megaNextDrawTime - Math.floor(now / 1000);
   let isMegaReadyToDraw = false;
   let megaTimeLeft = "Syncing...";
-  if (diffMegaUtc <= 0) { megaTimeLeft = "READY TO DRAW!"; isMegaReadyToDraw = true; } 
-  else { megaTimeLeft = `${Math.floor(diffMegaUtc / 60).toString().padStart(2, '0')}m ${(diffMegaUtc % 60).toString().padStart(2, '0')}s`; }
+  if (megaNextDrawTime > 0) {
+    if (diffMega <= 0) { megaTimeLeft = "READY TO DRAW!"; isMegaReadyToDraw = true; } 
+    else { megaTimeLeft = `${Math.floor(diffMega / 60).toString().padStart(2, '0')}m ${(diffMega % 60).toString().padStart(2, '0')}s`; }
+  }
 
   const connectWallet = async () => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -297,6 +301,7 @@ export default function Dashboard() {
   const myClassicWinsCount = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length;
   const myClassicWinnings = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).reduce((acc, curr) => acc + parseFloat(curr.prize), 0);
   const myClassicTicketsThisRound = classicPlayersList.map((p, i) => (wallet && p.toLowerCase() === wallet.toLowerCase() ? i + 1 : null)).filter(i => i !== null);
+  const latestMegaResult = megaHistoryLogs.length > 0 ? megaHistoryLogs[0] : null;
 
   return (
     <div className="min-h-screen bg-[#050810] text-white p-4 md:p-8 font-sans antialiased relative overflow-hidden">
@@ -347,7 +352,7 @@ export default function Dashboard() {
                     <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold px-3 py-1.5 rounded-full">0.1 USDC / Ticket</span>
                   </div>
                   <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 text-center">
-                    <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next UTC draw</p>
+                    <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next draw</p>
                     <div className="text-4xl font-black text-amber-400 font-mono">{classicTimeLeft}</div>
                   </div>
                   <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center">
@@ -421,7 +426,7 @@ export default function Dashboard() {
                   </div>
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
-                      <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Time to UTC Draw</p>
+                      <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Time to draw</p>
                       <p className="text-xl font-mono font-black text-amber-400">{megaTimeLeft}</p>
                     </div>
                     <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
@@ -429,15 +434,18 @@ export default function Dashboard() {
                       <p className="text-md font-black text-white mt-1">{megaNextDrawCode}</p>
                     </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-5 mb-6">
-                    <div className="flex justify-between border-b border-slate-800 pb-3 mb-3">
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 mb-6">
+                    <div className="flex justify-between border-b border-slate-800 pb-2 mb-2">
                       <span className="text-slate-400 text-[10px] font-bold uppercase mt-1">Accumulated Jackpot</span>
                       <span className="text-emerald-400 font-black text-2xl">{megaPoolBalance} USDC</span>
                     </div>
-                    <div className="flex justify-between text-[10px]">
-                      <span className="text-slate-500 uppercase font-bold">Seed Pool (Next Round Backup):</span>
-                      <span className="text-teal-400 font-bold">{megaSeedPoolBalance} USDC</span>
-                    </div>
+                    {/* HIỂN THỊ LỊCH SỬ KẾT QUẢ GẦN NHẤT ĐỂ MINH BẠCH */}
+                    {latestMegaResult && (
+                       <div className="flex justify-between items-center bg-[#0b1221]/50 p-2 rounded-xl mt-2 border border-slate-800">
+                         <span className="text-slate-500 text-[9px] uppercase font-bold">Last Result ({latestMegaResult.roundCode})</span>
+                         <span className="text-white font-mono font-bold tracking-widest text-sm">{latestMegaResult.winningNumbers}</span>
+                       </div>
+                    )}
                   </div>
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Select exactly 3 numbers ({megaSelectedNumbers.length}/3):</p>
                   <div className="grid grid-cols-6 sm:grid-cols-9 gap-2 p-3 bg-[#050810] rounded-2xl overflow-y-auto border border-slate-800/80 mb-6 custom-scrollbar">
@@ -527,11 +535,10 @@ export default function Dashboard() {
            </div>
         )}
 
-        {/* TAB 4: PERSONAL LEDGER (UPGRADED SECTION) */}
+        {/* TAB 4: PERSONAL LEDGER */}
         {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fadeIn">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
             
-            {/* Upgraded My Mega Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Tickets History & Round Results</p>
@@ -553,25 +560,32 @@ export default function Dashboard() {
                       <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets found for this address.</p>
                     ) : (
                       myMegaTickets.map((t, index) => {
-                        // Match with global logs to pull round results
                         const roundOutcome = megaHistoryLogs.find(h => h.roundIdx === t.roundIdx);
-                        const winningNums = roundOutcome ? roundOutcome.winningNumbers : 'N/A';
+                        const winningNums = roundOutcome ? roundOutcome.winningNumbers : 'WAITING...';
                         const isWin = roundOutcome && roundOutcome.status === 'WIN' && roundOutcome.winningNumbers === t.numbers;
                         const prizeAmount = isWin ? roundOutcome.prize : '0.0';
                         const isPending = t.roundIdx === megaCurrentRound;
 
                         return (
-                          <div key={index} className={`p-4 rounded-2xl border flex flex-col gap-2 transition-colors bg-[#0b1221]/50 ${isWin ? 'border-emerald-500/40 bg-emerald-950/10' : 'border-slate-800'}`}>
+                          <div key={index} className={`p-4 rounded-2xl border flex flex-col gap-2 transition-colors bg-[#0b1221]/50 ${isWin ? 'border-emerald-500/40 bg-emerald-950/20' : 'border-slate-800'}`}>
                             <div className="flex justify-between items-center">
                               <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">{t.roundCode}</span>
                               <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isPending ? 'bg-amber-500/10 text-amber-400' : (isWin ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500')}`}>
                                 {isPending ? 'PENDING' : (isWin ? 'WON' : 'LOST')}
                               </span>
                             </div>
-                            <div className="grid grid-cols-1 gap-1 text-xs">
-                              <p className="text-slate-400 font-mono">Your Pick: <span className="text-white font-bold tracking-wider">{t.numbers}</span></p>
-                              <p className="text-slate-400 font-mono">Winning Numbers: <span className="text-slate-300 font-bold tracking-wider">{winningNums}</span></p>
-                              {isWin && <p className="text-emerald-400 font-black text-sm mt-1">Prize Awarded: +{prizeAmount} USDC</p>}
+                            <div className="grid grid-cols-1 gap-1 text-xs mt-1">
+                              <div className="flex justify-between">
+                                <span className="text-slate-500 font-bold uppercase text-[10px]">Your Pick:</span>
+                                <span className="text-white font-mono font-bold tracking-wider">{t.numbers}</span>
+                              </div>
+                              {!isPending && (
+                                <div className="flex justify-between">
+                                  <span className="text-slate-500 font-bold uppercase text-[10px]">Result:</span>
+                                  <span className="text-slate-300 font-mono font-bold tracking-wider">{winningNums}</span>
+                                </div>
+                              )}
+                              {isWin && <p className="text-emerald-400 font-black text-sm mt-2 text-right">Prize Awarded: +{prizeAmount} USDC</p>}
                             </div>
                           </div>
                         )
@@ -582,7 +596,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Upgraded My Classic Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Active Position & Historical Winnings</p>
@@ -599,15 +612,14 @@ export default function Dashboard() {
                      </div>
                   </div>
 
-                  {/* Subsection 1: Current Round Tickets */}
                   <div className="mb-4">
                     <p className="text-slate-400 text-[11px] font-black uppercase mb-2 tracking-wider">Active Round Position ({classicNextDrawCode})</p>
                     <div className="bg-[#050810] border border-slate-800 rounded-2xl p-3 max-h-[110px] overflow-y-auto custom-scrollbar flex flex-wrap gap-2">
                       {myClassicTicketsThisRound.length === 0 ? (
-                        <p className="text-slate-600 text-xs italic p-1">No positions taken in the active round yet.</p>
+                        <p className="text-slate-600 text-[11px] italic p-1">No positions taken in the active round yet.</p>
                       ) : (
                         myClassicTicketsThisRound.map(tIdx => (
-                          <span key={tIdx} className="bg-cyan-500/10 text-cyan-400 text-xs font-mono font-bold px-2 py-1 rounded border border-cyan-500/20">
+                          <span key={tIdx} className="bg-cyan-500/10 text-cyan-400 text-[11px] font-mono font-bold px-2 py-1 rounded border border-cyan-500/20">
                             Ticket #{tIdx}
                           </span>
                         ))
@@ -615,14 +627,13 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Subsection 2: Past Wins */}
                   <p className="text-slate-400 text-[11px] font-black uppercase mb-2 tracking-wider">Past Payout Records</p>
                   <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
                     {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? (
-                      <p className="text-slate-600 text-sm italic text-center py-10">No classic win logs found for this wallet.</p>
+                      <p className="text-slate-600 text-sm italic text-center py-6">No classic win logs found for this wallet.</p>
                     ) : (
                       classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
-                        <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/30 bg-emerald-950/5 flex justify-between items-center">
+                        <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/30 bg-emerald-950/10 flex justify-between items-center">
                           <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-black text-[10px] uppercase px-2 py-1 rounded-full">{h.roundCode}</span>
                           <span className="text-emerald-400 text-sm font-black">+{h.prize} USDC</span>
                         </div>
