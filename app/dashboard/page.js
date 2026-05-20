@@ -92,12 +92,12 @@ export default function Dashboard() {
     return () => clearInterval(clock);
   }, []);
 
-  // --- SAFE HISTORY FETCH LOGIC (DYNAMIC BLOCK CHUNKING) ---
+  // --- BLOCKCHAIN FETCH ENGINE ---
   const fetchAllBlockchainData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       const currentBlock = await provider.getBlockNumber();
-      let fromBlock = currentBlock - 100000; // Query ~100k blocks back to avoid RPC limits
+      let fromBlock = currentBlock - 100000; 
       if (fromBlock < 0) fromBlock = 0;
       
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
@@ -114,7 +114,7 @@ export default function Dashboard() {
           const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
           return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
         }).reverse());
-      } catch (e) { console.error("Classic logs error", e); }
+      } catch (e) { console.error("Classic history parse error", e); }
 
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
       setMegaPoolBalance(ethers.formatEther(await megaContract.jackpotPool()));
@@ -143,7 +143,7 @@ export default function Dashboard() {
           compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
         });
         setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
-      } catch (e) { console.error("Mega logs error", e); }
+      } catch (e) { console.error("Mega history parse error", e); }
 
       if (wallet) {
          try {
@@ -151,7 +151,7 @@ export default function Dashboard() {
            setMyMegaTickets(myTicketLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: formatNumbersSafe(e.args[2]) };
+             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: Array.from(e.args[2]).map(n => Number(n).toString().padStart(2, '0')).join(' - ') };
            }).reverse());
          } catch(e) { console.error(e); }
       }
@@ -182,7 +182,7 @@ export default function Dashboard() {
 
   if (!mounted || !now) return null;
 
-  // Time calculations
+  // Real-time clock ticks
   const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
   let isClassicReadyToDraw = false;
   let classicTimeLeft = "Syncing...";
@@ -340,7 +340,6 @@ export default function Dashboard() {
         {activeTab === 'classic' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Box 1: Draw Actions - Fixed Height */}
               <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
                 <div>
                   <div className="flex justify-between items-center mb-8">
@@ -373,7 +372,6 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Box 2: Live Network - Fixed Height with Inner Scroll */}
               <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[600px]">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
@@ -393,7 +391,6 @@ export default function Dashboard() {
               </div>
             </div>
             
-            {/* Box 3: Global History - Bottom Full Width */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full h-[400px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">Global Classic History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Past Winners Overview</p>
@@ -416,7 +413,6 @@ export default function Dashboard() {
         {activeTab === 'mega' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Box 1: Mega Actions - Fixed Height */}
               <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 h-[650px]">
                 <div>
                   <div className="flex justify-between items-center mb-6">
@@ -455,8 +451,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Box 2: Mega Cart - Fixed Height with Inner Scroll */}
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[650px]">
+              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[650px]">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-xl font-bold text-fuchsia-400">Your Ticket Cart</h3>
                   <span className="bg-[#050810] border border-slate-700 px-3 py-1 rounded-full text-xs font-bold text-slate-300">Total: {megaCart.length}</span>
@@ -492,7 +487,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Box 3: Global Mega History - Bottom Full Width */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full h-[400px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">Global Mega History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Rollover & Win Activity</p>
@@ -533,13 +527,15 @@ export default function Dashboard() {
            </div>
         )}
 
-        {/* TAB 4: PERSONAL LEDGER */}
+        {/* TAB 4: PERSONAL LEDGER (UPGRADED SECTION) */}
         {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fadeIn">
+            
+            {/* Upgraded My Mega Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
-              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Picks & Wins</p>
-              {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Tickets History & Round Results</p>
+              {!wallet ? <p className="text-slate-600 text-sm py-20 text-center italic">Connect wallet to view your personal ledger.</p> : (
                 <>
                   <div className="grid grid-cols-2 gap-4 mb-4">
                      <div className="p-4 bg-[#050810] border border-slate-800 rounded-xl text-center">
@@ -551,31 +547,50 @@ export default function Dashboard() {
                         <p className="text-2xl font-black text-fuchsia-400">{myMegaWinsCount}</p>
                      </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                    {myMegaTickets.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets bought.</p> : myMegaTickets.map((t, index) => {
-                      const isWin = megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers);
-                      const isPending = t.roundIdx === megaCurrentRound;
-                      return (
-                        <div key={index} className={`bg-[#0b1221] p-3 rounded-xl border flex justify-between items-center ${isWin ? 'border-emerald-500/50' : 'border-slate-800/80'}`}>
-                          <span className="text-fuchsia-400 font-black text-[10px] uppercase">{t.roundCode}</span>
-                          <span className="font-mono text-white text-xs font-bold">{t.numbers}</span>
-                          <span className={`text-[10px] font-black uppercase ${isPending ? 'text-amber-400' : (isWin ? 'text-emerald-400' : 'text-slate-600')}`}>{isPending ? 'PENDING' : (isWin ? 'WON' : 'LOST')}</span>
-                        </div>
-                      )
-                    })}
+                  
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
+                    {myMegaTickets.length === 0 ? (
+                      <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets found for this address.</p>
+                    ) : (
+                      myMegaTickets.map((t, index) => {
+                        // Match with global logs to pull round results
+                        const roundOutcome = megaHistoryLogs.find(h => h.roundIdx === t.roundIdx);
+                        const winningNums = roundOutcome ? roundOutcome.winningNumbers : 'N/A';
+                        const isWin = roundOutcome && roundOutcome.status === 'WIN' && roundOutcome.winningNumbers === t.numbers;
+                        const prizeAmount = isWin ? roundOutcome.prize : '0.0';
+                        const isPending = t.roundIdx === megaCurrentRound;
+
+                        return (
+                          <div key={index} className={`p-4 rounded-2xl border flex flex-col gap-2 transition-colors bg-[#0b1221]/50 ${isWin ? 'border-emerald-500/40 bg-emerald-950/10' : 'border-slate-800'}`}>
+                            <div className="flex justify-between items-center">
+                              <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">{t.roundCode}</span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isPending ? 'bg-amber-500/10 text-amber-400' : (isWin ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500')}`}>
+                                {isPending ? 'PENDING' : (isWin ? 'WON' : 'LOST')}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1 text-xs">
+                              <p className="text-slate-400 font-mono">Your Pick: <span className="text-white font-bold tracking-wider">{t.numbers}</span></p>
+                              <p className="text-slate-400 font-mono">Winning Numbers: <span className="text-slate-300 font-bold tracking-wider">{winningNums}</span></p>
+                              {isWin && <p className="text-emerald-400 font-black text-sm mt-1">Prize Awarded: +{prizeAmount} USDC</p>}
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
                 </>
               )}
             </div>
 
+            {/* Upgraded My Classic Profile */}
             <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
-              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
-              {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Active Position & Historical Winnings</p>
+              {!wallet ? <p className="text-slate-600 text-sm py-20 text-center italic">Connect wallet to view your personal ledger.</p> : (
                 <>
                   <div className="grid grid-cols-2 gap-4 mb-4">
                      <div className="p-3 bg-[#050810] border border-slate-800 rounded-xl text-center">
-                        <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Wins / Current Tix</p>
+                        <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Wins / Active Tickets</p>
                         <p className="text-xl font-black text-white">{myClassicWinsCount} / {myClassicTicketsThisRound.length}</p>
                      </div>
                      <div className="p-3 bg-cyan-950/20 border border-cyan-900/50 rounded-xl text-center">
@@ -583,13 +598,36 @@ export default function Dashboard() {
                         <p className="text-xl font-black text-cyan-400">{myClassicWinnings.toFixed(1)}</p>
                      </div>
                   </div>
+
+                  {/* Subsection 1: Current Round Tickets */}
+                  <div className="mb-4">
+                    <p className="text-slate-400 text-[11px] font-black uppercase mb-2 tracking-wider">Active Round Position ({classicNextDrawCode})</p>
+                    <div className="bg-[#050810] border border-slate-800 rounded-2xl p-3 max-h-[110px] overflow-y-auto custom-scrollbar flex flex-wrap gap-2">
+                      {myClassicTicketsThisRound.length === 0 ? (
+                        <p className="text-slate-600 text-xs italic p-1">No positions taken in the active round yet.</p>
+                      ) : (
+                        myClassicTicketsThisRound.map(tIdx => (
+                          <span key={tIdx} className="bg-cyan-500/10 text-cyan-400 text-xs font-mono font-bold px-2 py-1 rounded border border-cyan-500/20">
+                            Ticket #{tIdx}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Subsection 2: Past Wins */}
+                  <p className="text-slate-400 text-[11px] font-black uppercase mb-2 tracking-wider">Past Payout Records</p>
                   <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
-                      <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
-                        <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
-                        <span className="text-emerald-400 text-xs font-black">+{h.prize} USDC</span>
-                      </div>
-                    ))}
+                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? (
+                      <p className="text-slate-600 text-sm italic text-center py-10">No classic win logs found for this wallet.</p>
+                    ) : (
+                      classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
+                        <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/30 bg-emerald-950/5 flex justify-between items-center">
+                          <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-black text-[10px] uppercase px-2 py-1 rounded-full">{h.roundCode}</span>
+                          <span className="text-emerald-400 text-sm font-black">+{h.prize} USDC</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </>
               )}
