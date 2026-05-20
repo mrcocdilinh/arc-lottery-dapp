@@ -36,7 +36,7 @@ const MEGA_ABI = [
 
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false);
-  const [now, setNow] = useState(null); // Fix hydration crash
+  const [now, setNow] = useState(null);
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('classic'); 
@@ -61,7 +61,6 @@ export default function Dashboard() {
     return `${yyyy}${mm}${dd}-${h}`;
   };
 
-  // Tránh lỗi parse mảng BigInt của Ethers v6 làm sập React
   const formatNumbersSafe = (arr) => {
     try { return Array.from(arr).map(n => Number(n).toString().padStart(2, '0')).join(' - '); } 
     catch(e) { return 'N/A'; }
@@ -93,10 +92,13 @@ export default function Dashboard() {
     return () => clearInterval(clock);
   }, []);
 
-  // --- FETCH BLOCKCHAIN DATA ---
+  // --- SAFE HISTORY FETCH LOGIC (DYNAMIC BLOCK CHUNKING) ---
   const fetchAllBlockchainData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
+      const currentBlock = await provider.getBlockNumber();
+      let fromBlock = currentBlock - 100000; // Query ~100k blocks back to avoid RPC limits
+      if (fromBlock < 0) fromBlock = 0;
       
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
       setClassicPoolBalance(ethers.formatEther(await classicContract.getPoolBalance()));
@@ -107,7 +109,7 @@ export default function Dashboard() {
       setClassicNextDrawCode(formatUtcRoundCode(cLastTime + 3600));
 
       try {
-        const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), 0);
+        const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), fromBlock, currentBlock);
         setClassicHistoricalWinners(cEvents.map((e, i) => {
           const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
           return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
@@ -125,8 +127,8 @@ export default function Dashboard() {
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
       try {
-        const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), 0);
-        const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), 0);
+        const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), fromBlock, currentBlock);
+        const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), fromBlock, currentBlock);
         const compiledMegaHistory = [];
         
         wonEvents.forEach(e => {
@@ -145,7 +147,7 @@ export default function Dashboard() {
 
       if (wallet) {
          try {
-           const myTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(wallet), 0);
+           const myTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(wallet), fromBlock, currentBlock);
            setMyMegaTickets(myTicketLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
@@ -178,7 +180,7 @@ export default function Dashboard() {
 
   useEffect(() => { if (wallet) fetchAllBlockchainData(); }, [wallet]);
 
-  if (!mounted || !now) return null; // Prevent Hydration errors
+  if (!mounted || !now) return null;
 
   // Time calculations
   const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
@@ -334,10 +336,12 @@ export default function Dashboard() {
           <button onClick={() => setActiveTab('ledger')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'ledger' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'text-slate-500 hover:bg-slate-800/50'}`}>PERSONAL LEDGER</button>
         </div>
 
+        {/* TAB 1: CLASSIC DRAW */}
         {activeTab === 'classic' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[450px]">
+              {/* Box 1: Draw Actions - Fixed Height */}
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
                 <div>
                   <div className="flex justify-between items-center mb-8">
                     <h2 className="text-3xl font-black text-white">Classic Draw</h2>
@@ -369,7 +373,8 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[450px]">
+              {/* Box 2: Live Network - Fixed Height with Inner Scroll */}
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[600px]">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
                   <div className="flex items-center gap-2">
@@ -388,10 +393,11 @@ export default function Dashboard() {
               </div>
             </div>
             
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
+            {/* Box 3: Global History - Bottom Full Width */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full h-[400px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">Global Classic History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Past Winners Overview</p>
-              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
                 {classicHistoricalWinners.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No history found.</p> : classicHistoricalWinners.map((data, index) => (
                   <div key={index} className="flex justify-between items-center bg-[#0b1221] p-4 rounded-2xl border border-slate-800/50 hover:border-cyan-500/30 transition-colors">
                     <div>
@@ -406,10 +412,12 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* TAB 2: MEGA JACKPOT 3/45 */}
         {activeTab === 'mega' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 h-full min-h-[500px]">
+              {/* Box 1: Mega Actions - Fixed Height */}
+              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 h-[650px]">
                 <div>
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-black text-fuchsia-400">Mega Jackpot 3/45</h2>
@@ -447,7 +455,8 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
+              {/* Box 2: Mega Cart - Fixed Height with Inner Scroll */}
+              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[650px]">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-xl font-bold text-fuchsia-400">Your Ticket Cart</h3>
                   <span className="bg-[#050810] border border-slate-700 px-3 py-1 rounded-full text-xs font-bold text-slate-300">Total: {megaCart.length}</span>
@@ -483,10 +492,11 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
+            {/* Box 3: Global Mega History - Bottom Full Width */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full h-[400px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">Global Mega History</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Rollover & Win Activity</p>
-              <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
+              <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
                 {megaHistoryLogs.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No logs found.</p> : megaHistoryLogs.map((log, index) => (
                   <div key={index} className={`bg-[#0b1221] p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all hover:border-fuchsia-500/30 ${log.status === 'WIN' ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-amber-500/20'}`}>
                     <div className="flex flex-col gap-2 w-full md:w-auto">
@@ -508,6 +518,7 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* TAB 3: SCRATCH CARDS */}
         {activeTab === 'scratch' && (
            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-12 shadow-2xl text-center flex flex-col items-center animate-fadeIn">
              <h2 className="text-4xl font-black text-amber-400 mb-4">Instant Scratch Cards</h2>
@@ -522,10 +533,10 @@ export default function Dashboard() {
            </div>
         )}
 
+        {/* TAB 4: PERSONAL LEDGER */}
         {activeTab === 'ledger' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
-            
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Picks & Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
@@ -540,7 +551,7 @@ export default function Dashboard() {
                         <p className="text-2xl font-black text-fuchsia-400">{myMegaWinsCount}</p>
                      </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-2 custom-scrollbar">
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
                     {myMegaTickets.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets bought.</p> : myMegaTickets.map((t, index) => {
                       const isWin = megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers);
                       const isPending = t.roundIdx === megaCurrentRound;
@@ -557,7 +568,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[600px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
@@ -572,7 +583,7 @@ export default function Dashboard() {
                         <p className="text-xl font-black text-cyan-400">{myClassicWinnings.toFixed(1)}</p>
                      </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-2 custom-scrollbar">
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
                     {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
                       <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
                         <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
@@ -586,6 +597,7 @@ export default function Dashboard() {
 
           </div>
         )}
+
       </div>
 
       {/* RAINBOWKIT STYLE WALLET SELECTOR */}
