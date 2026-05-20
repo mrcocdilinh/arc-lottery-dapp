@@ -215,9 +215,13 @@ export default function Dashboard() {
     }
   };
 
+  // Tính toán dữ liệu thống kê cá nhân
   const myTicketIndexes = playersList
     .map((p, index) => (wallet && p.toLowerCase() === wallet.toLowerCase() ? index + 1 : null))
     .filter(index => index !== null);
+
+  const myWins = historicalWinners.filter(h => wallet && h.winner.toLowerCase() === wallet.toLowerCase());
+  const totalMyWinnings = myWins.reduce((acc, curr) => acc + parseFloat(curr.prize), 0);
 
   return (
     <div className="min-h-screen bg-[#050810] text-white p-4 md:p-8 font-sans antialiased relative overflow-hidden">
@@ -328,16 +332,16 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Current Round List */}
+            {/* Current Round List (Đã fix lỗi giãn trang bằng max-h-[350px]) */}
             <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
                 <span className="bg-[#050810] border border-slate-700 px-4 py-1.5 rounded-full text-xs font-bold text-slate-300">Total: {playersList.length} tickets</span>
               </div>
               <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-4">Tickets awaiting draw:</p>
-              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto max-h-[350px] flex-1 space-y-3 custom-scrollbar">
                 {playersList.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
+                  <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50 py-10">
                     <span className="text-5xl mb-4">🎟️</span>
                     <p className="text-sm font-medium">No tickets purchased in this round yet.</p>
                   </div>
@@ -394,70 +398,83 @@ export default function Dashboard() {
            </div>
         )}
 
-        {/* Tab 4: Ledger & History */}
+        {/* Tab 4: Ledger & History (Cập nhật Logic Thống kê và Lịch sử trúng giải) */}
         {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 gap-8 animate-fadeIn">
-            {/* My Tickets Section */}
-            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 md:p-10 shadow-2xl">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-                <div>
-                  <h2 className="text-3xl font-black text-emerald-400 mb-2 tracking-tight">My Active Inventory</h2>
-                  <p className="text-slate-500 text-sm">Track your entries for the current pending draw.</p>
-                </div>
-                {wallet && (
-                  <div className="flex gap-4">
-                     <div className="bg-[#050810] px-6 py-3 rounded-2xl border border-slate-800 flex flex-col items-end">
-                       <span className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Total Tickets</span>
-                       <span className="text-2xl font-black text-white leading-none">{myTicketIndexes.length}</span>
-                     </div>
-                     <div className="bg-emerald-950/20 px-6 py-3 rounded-2xl border border-emerald-900/50 flex flex-col items-end">
-                       <span className="text-emerald-500/70 text-[10px] font-bold uppercase tracking-wider mb-1">Win Chance</span>
-                       <span className="text-2xl font-black text-emerald-400 leading-none">
-                         {playersList.length > 0 ? ((myTicketIndexes.length / playersList.length) * 100).toFixed(1) : 0}%
-                       </span>
-                     </div>
-                  </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
+            {/* Cột trái: Thống kê cá nhân + Vé vòng hiện tại */}
+            <div className="flex flex-col gap-8">
+              {/* Thống kê cá nhân */}
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl">
+                <h2 className="text-3xl font-black text-emerald-400 mb-6 tracking-tight">My Winning Stats</h2>
+                {!wallet ? (
+                  <p className="text-slate-500 text-sm mb-4">Please connect your wallet to view your personal winning statistics.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="bg-[#050810] p-6 rounded-3xl border border-slate-800 text-center">
+                        <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Total Wins</p>
+                        <p className="text-3xl font-black text-white">{myWins.length}</p>
+                      </div>
+                      <div className="bg-emerald-950/20 p-6 rounded-3xl border border-emerald-900/50 text-center">
+                        <p className="text-emerald-500/70 text-[10px] font-bold uppercase tracking-wider mb-1">Total Won (USDC)</p>
+                        <p className="text-3xl font-black text-emerald-400">{totalMyWinnings.toFixed(1)}</p>
+                      </div>
+                    </div>
+                    
+                    <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-3">My Past Wins:</p>
+                    <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto max-h-[150px] custom-scrollbar space-y-2">
+                      {myWins.length === 0 ? (
+                        <p className="text-slate-600 text-sm italic text-center py-4">No wins yet.</p>
+                      ) : (
+                        myWins.map((win, i) => (
+                          <div key={i} className="flex justify-between items-center bg-[#0b1221] p-3 rounded-2xl border border-slate-800/50">
+                            <span className="text-slate-500 text-xs font-black uppercase">Round #{win.round}</span>
+                            <span className="text-emerald-400 font-bold text-sm">+{win.prize} USDC</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
 
-              {!wallet ? (
-                <div className="bg-[#050810] p-12 rounded-3xl border border-slate-800 flex flex-col items-center justify-center">
-                  <span className="text-4xl mb-4">🔌</span>
-                  <p className="text-slate-400 mb-6 text-sm font-medium">Please connect your wallet to view your secure inventory.</p>
-                  <button onClick={() => setShowWalletModal(true)} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black tracking-wider uppercase py-3 px-8 rounded-xl text-sm transition-colors">Connect Wallet</button>
+              {/* Vé vòng hiện tại */}
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-black text-cyan-400 tracking-tight">Active Inventory</h2>
                 </div>
-              ) : (
-                <div>
-                  {myTicketIndexes.length === 0 ? (
-                    <div className="bg-[#050810] p-10 rounded-3xl border border-slate-800 flex flex-col items-center justify-center text-slate-500">
-                      <span className="text-3xl mb-3 opacity-50">🎫</span>
-                      <p className="text-sm font-medium">You have 0 tickets in this round.</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 gap-3 max-h-[200px] overflow-y-auto custom-scrollbar p-2">
-                      {myTicketIndexes.map(idx => (
-                        <div key={idx} className="bg-emerald-500/10 border border-emerald-500/30 py-3 rounded-2xl text-center font-black text-emerald-400 font-mono shadow-inner text-sm hover:bg-emerald-500/20 transition-colors">
-                          #{idx}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                {!wallet ? (
+                  <p className="text-slate-500 text-sm">Connect wallet to view your active tickets for the current draw.</p>
+                ) : (
+                  <div>
+                    {myTicketIndexes.length === 0 ? (
+                      <p className="text-slate-600 text-sm italic text-center py-4">0 tickets in this round.</p>
+                    ) : (
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-3 max-h-[150px] overflow-y-auto custom-scrollbar p-2">
+                        {myTicketIndexes.map(idx => (
+                          <div key={idx} className="bg-emerald-500/10 border border-emerald-500/30 py-2 rounded-xl text-center font-black text-emerald-400 font-mono shadow-inner text-xs hover:bg-emerald-500/20 transition-colors">
+                            #{idx}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Global History Table */}
-            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 md:p-10 shadow-2xl">
-              <h2 className="text-3xl font-black text-amber-400 mb-8 tracking-tight">Past Winners History</h2>
-              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 overflow-y-auto max-h-[500px] space-y-4 custom-scrollbar">
+            {/* Cột phải: Bảng vàng Lịch sử toàn cầu */}
+            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 md:p-10 shadow-2xl h-full">
+              <h2 className="text-3xl font-black text-amber-400 mb-8 tracking-tight">Global Winners</h2>
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 overflow-y-auto max-h-[600px] space-y-4 custom-scrollbar">
                 {historicalWinners.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-slate-600">
                     <span className="text-4xl mb-4 opacity-50">📜</span>
-                    <p className="text-sm font-medium">No past draws found or still syncing blockchain logs.</p>
+                    <p className="text-sm font-medium">No past draws found or still syncing logs.</p>
                   </div>
                 ) : (
                   historicalWinners.map((data, index) => (
-                    <div key={index} className="bg-[#0b1221] border border-slate-800 hover:border-amber-500/30 p-5 rounded-2xl flex flex-col md:flex-row md:justify-between md:items-center gap-4 transition-all group">
+                    <div key={index} className="bg-[#0b1221] border border-slate-800 hover:border-amber-500/30 p-5 rounded-2xl flex flex-col xl:flex-row xl:justify-between xl:items-center gap-4 transition-all group">
                       <div>
                          <span className="inline-block bg-amber-500/10 text-amber-500 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full mb-3 border border-amber-500/20">Round #{data.round}</span>
                          <div className="font-mono text-sm text-slate-300 group-hover:text-amber-200 transition-colors">
@@ -465,7 +482,7 @@ export default function Dashboard() {
                            {data.winner}
                          </div>
                       </div>
-                      <div className="text-right">
+                      <div className="xl:text-right">
                         <span className="block text-emerald-400 font-black text-xl drop-shadow-md">+{data.prize} USDC</span>
                       </div>
                     </div>
