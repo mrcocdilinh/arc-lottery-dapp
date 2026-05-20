@@ -117,7 +117,6 @@ export default function Dashboard() {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       
-      // Fetch Classic
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
       setClassicPoolBalance(ethers.formatEther(await classicContract.getPoolBalance()));
       setClassicPlayersList(await classicContract.getPlayers());
@@ -127,19 +126,13 @@ export default function Dashboard() {
       setClassicNextDrawCode(formatUtcRoundCode(cLastTime + 3600));
 
       try {
-        // Use block 0 to fetch entire history to avoid disappearing logs
         const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), 0);
         setClassicHistoricalWinners(cEvents.map((e, i) => {
           const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
-          return {
-            roundCode: formatUtcRoundCode(expectedTs),
-            winner: e.args[0],
-            prize: ethers.formatEther(e.args[1])
-          };
+          return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
         }).reverse());
       } catch (e) { console.error("Classic logs error", e); }
 
-      // Fetch Mega
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
       setMegaPoolBalance(ethers.formatEther(await megaContract.jackpotPool()));
       setMegaSeedPoolBalance(ethers.formatEther(await megaContract.seedPool()));
@@ -150,7 +143,6 @@ export default function Dashboard() {
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
       try {
-        // Use block 0 to fetch entire history
         const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), 0);
         const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), 0);
         const compiledMegaHistory = [];
@@ -179,7 +171,6 @@ export default function Dashboard() {
            }).reverse());
          } catch(e) { console.error(e); }
       }
-
     } catch (err) { console.error("Fetch Data Critical Error:", err); }
   };
 
@@ -306,14 +297,14 @@ export default function Dashboard() {
       await (await new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, signerInstance).drawJackpot()).wait();
       showToast('Mega Draw Executed!', 'success');
       await fetchAllBlockchainData();
-    } catch { showToast('Draw condition not met (Not UTC Hour yet).', 'error'); } finally { setLoadingState(''); }
+    } catch { showToast('Draw condition not met.', 'error'); } finally { setLoadingState(''); }
   };
 
   const myMegaWinsCount = myMegaTickets.filter(t => megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers)).length;
   const myClassicWinsCount = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length;
   const myClassicWinnings = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).reduce((acc, curr) => acc + parseFloat(curr.prize), 0);
   const myClassicTicketsThisRound = classicPlayersList.map((p, i) => (wallet && p.toLowerCase() === wallet.toLowerCase() ? i + 1 : null)).filter(i => i !== null);
-return (
+  return (
     <div className="min-h-screen bg-[#050810] text-white p-4 md:p-8 font-sans antialiased relative overflow-hidden">
       <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-cyan-600/15 blur-[120px] rounded-full pointer-events-none z-0"></div>
 
@@ -358,7 +349,7 @@ return (
           <div className="flex flex-col gap-8 animate-fadeIn">
             {/* Top 2 Columns */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col">
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-full">
                 <div>
                   <div className="flex justify-between items-center mb-8">
                     <h2 className="text-3xl font-black text-white">Classic Draw</h2>
@@ -366,7 +357,7 @@ return (
                   </div>
                   <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 text-center">
                     <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next UTC draw</p>
-                    <div className="text-4xl font-black text-amber-400 font-mono">{classicTimeLeft}</div>
+                    <div className="text-4xl font-black text-amber-400 font-mono">{globalTimeLeft}</div>
                   </div>
                   <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center">
                     <p className="text-emerald-500/80 text-[10px] font-bold uppercase mb-2">Current Jackpot Pool</p>
@@ -551,9 +542,11 @@ return (
         {/* TAB 4: PERSONAL LEDGER */}
         {activeTab === 'ledger' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+            
+            {/* My Mega Profile */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
-              <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Picks & Wins</p>
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Picks & Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
                 <>
                   <div className="grid grid-cols-2 gap-4 mb-4">
@@ -566,7 +559,7 @@ return (
                         <p className="text-2xl font-black text-fuchsia-400">{myMegaWinsCount}</p>
                      </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-2 custom-scrollbar">
                     {myMegaTickets.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets bought.</p> : myMegaTickets.map((t, index) => {
                       const isWin = megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers);
                       const isPending = t.roundIdx === megaCurrentRound;
@@ -583,9 +576,10 @@ return (
               )}
             </div>
 
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+            {/* My Classic Profile */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
-              <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
                 <>
                   <div className="grid grid-cols-2 gap-4 mb-4">
@@ -598,8 +592,8 @@ return (
                         <p className="text-xl font-black text-cyan-400">{myClassicWinnings.toFixed(1)}</p>
                      </div>
                   </div>
-                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-2 custom-scrollbar">
+                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
                       <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
                         <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
                         <span className="text-emerald-400 text-xs font-black">+{h.prize} USDC</span>
@@ -609,8 +603,10 @@ return (
                 </>
               )}
             </div>
+
           </div>
         )}
+
       </div>
 
       {/* Wallet Selector Modal Pop-up */}
