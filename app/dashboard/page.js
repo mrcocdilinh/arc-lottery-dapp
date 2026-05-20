@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 // --- CONTRACT ADDRESSES ---
 const CLASSIC_ADDRESS = "0xE0F2C50E2F2A6F91A02De6d9C398088113d9f5B0";
 const MEGA_ADDRESS = "0x9A394437782F422C0B04416deCC21cDce0392bA4";
+
 const ARC_RPC_URL = "https://rpc.testnet.arc.network";
 const ARC_CHAIN_ID = 5042002;
 const ARC_CHAIN_ID_HEX = "0x4CEF52";
@@ -35,6 +36,7 @@ const MEGA_ABI = [
 
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState(null); // Fix hydration crash
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('classic'); 
@@ -55,8 +57,14 @@ export default function Dashboard() {
     const yyyy = d.getUTCFullYear();
     const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
     const dd = String(d.getUTCDate()).padStart(2, '0');
-    const h = d.getUTCHours();
+    const h = String(d.getUTCHours()).padStart(2, '0');
     return `${yyyy}${mm}${dd}-${h}`;
+  };
+
+  // Tránh lỗi parse mảng BigInt của Ethers v6 làm sập React
+  const formatNumbersSafe = (arr) => {
+    try { return Array.from(arr).map(n => Number(n).toString().padStart(2, '0')).join(' - '); } 
+    catch(e) { return 'N/A'; }
   };
 
   // --- CLASSIC STATE ---
@@ -78,9 +86,6 @@ export default function Dashboard() {
   const [megaHistoryLogs, setMegaHistoryLogs] = useState([]);
   const [myMegaTickets, setMyMegaTickets] = useState([]);
 
-  // --- STRICT UTC CLOCK FOR ALL DRAWS ---
-  const [now, setNow] = useState(0);
-  
   useEffect(() => {
     setMounted(true);
     setNow(Date.now());
@@ -88,40 +93,11 @@ export default function Dashboard() {
     return () => clearInterval(clock);
   }, []);
 
-  // Classic Clock
-  const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
-  let isClassicReadyToDraw = false;
-  let classicTimeLeft = "Syncing...";
-  if (classicNextDrawTime > 0) {
-    if (diffClassic <= 0) {
-      classicTimeLeft = "READY TO DRAW!";
-      isClassicReadyToDraw = true;
-    } else {
-      classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`;
-    }
-  }
-
-  // Mega Clock (Strict UTC Hour)
-  const currentUtc = new Date(now || Date.now());
-  const nextUtcHour = new Date(currentUtc);
-  nextUtcHour.setUTCHours(currentUtc.getUTCHours() + 1, 0, 0, 0);
-  const diffMegaUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
-  
-  let isMegaReadyToDraw = false;
-  let megaTimeLeft = "Syncing...";
-  if (diffMegaUtc <= 0) {
-    megaTimeLeft = "READY TO DRAW!";
-    isMegaReadyToDraw = true;
-  } else {
-    megaTimeLeft = `${Math.floor(diffMegaUtc / 60).toString().padStart(2, '0')}m ${(diffMegaUtc % 60).toString().padStart(2, '0')}s`;
-  }
-
   // --- FETCH BLOCKCHAIN DATA ---
   const fetchAllBlockchainData = async () => {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       
-      // Fetch Classic
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
       setClassicPoolBalance(ethers.formatEther(await classicContract.getPoolBalance()));
       setClassicPlayersList(await classicContract.getPlayers());
@@ -138,7 +114,6 @@ export default function Dashboard() {
         }).reverse());
       } catch (e) { console.error("Classic logs error", e); }
 
-      // Fetch Mega
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
       setMegaPoolBalance(ethers.formatEther(await megaContract.jackpotPool()));
       setMegaSeedPoolBalance(ethers.formatEther(await megaContract.seedPool()));
@@ -157,13 +132,13 @@ export default function Dashboard() {
         wonEvents.forEach(e => {
           const r = Number(e.args[0]);
           const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: e.args[1].join(' - '), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
+          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
         });
         
         noEvents.forEach(e => {
           const r = Number(e.args[0]);
           const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: e.args[1].join(' - '), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
+          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
         });
         setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
       } catch (e) { console.error("Mega logs error", e); }
@@ -174,7 +149,7 @@ export default function Dashboard() {
            setMyMegaTickets(myTicketLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: e.args[2].join(' - ') };
+             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: formatNumbersSafe(e.args[2]) };
            }).reverse());
          } catch(e) { console.error(e); }
       }
@@ -203,6 +178,27 @@ export default function Dashboard() {
 
   useEffect(() => { if (wallet) fetchAllBlockchainData(); }, [wallet]);
 
+  if (!mounted || !now) return null; // Prevent Hydration errors
+
+  // Time calculations
+  const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
+  let isClassicReadyToDraw = false;
+  let classicTimeLeft = "Syncing...";
+  if (classicNextDrawTime > 0) {
+    if (diffClassic <= 0) { classicTimeLeft = "READY TO DRAW!"; isClassicReadyToDraw = true; } 
+    else { classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`; }
+  }
+
+  const currentUtc = new Date(now);
+  const nextUtcHour = new Date(currentUtc);
+  nextUtcHour.setUTCHours(currentUtc.getUTCHours() + 1, 0, 0, 0);
+  const diffMegaUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
+  
+  let isMegaReadyToDraw = false;
+  let megaTimeLeft = "Syncing...";
+  if (diffMegaUtc <= 0) { megaTimeLeft = "READY TO DRAW!"; isMegaReadyToDraw = true; } 
+  else { megaTimeLeft = `${Math.floor(diffMegaUtc / 60).toString().padStart(2, '0')}m ${(diffMegaUtc % 60).toString().padStart(2, '0')}s`; }
+
   const connectWallet = async () => {
     if (typeof window !== 'undefined' && window.ethereum) {
       try {
@@ -212,9 +208,8 @@ export default function Dashboard() {
         if (Number(network.chainId) !== ARC_CHAIN_ID) {
           try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX }] }); } 
           catch (e) {
-            if (e.code === 4902) {
-              await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX, chainName: 'Arc Testnet', rpcUrls: [ARC_RPC_URL], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://explorer.testnet.arc.network'] }] });
-            } else { throw e; }
+            if (e.code === 4902) { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX, chainName: 'Arc Testnet', rpcUrls: [ARC_RPC_URL], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://explorer.testnet.arc.network'] }] }); } 
+            else { throw e; }
           }
         }
         const signer = await browserProvider.getSigner();
@@ -224,9 +219,7 @@ export default function Dashboard() {
         localStorage.setItem('connectedWalletType', 'browser');
         showToast("Wallet connected successfully!", "success");
       } catch (err) { showToast(err.message, "error"); }
-    } else {
-      showToast("No Web3 wallet extension detected!", "error");
-    }
+    } else { showToast("No Web3 wallet extension detected!", "error"); }
   };
 
   const handleBuyClassicTickets = async () => {
@@ -298,8 +291,6 @@ export default function Dashboard() {
     } catch { showToast('Draw condition not met.', 'error'); } finally { setLoadingState(''); }
   };
 
-  if (!mounted) return null;
-
   const myMegaWinsCount = myMegaTickets.filter(t => megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers)).length;
   const myClassicWinsCount = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length;
   const myClassicWinnings = classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).reduce((acc, curr) => acc + parseFloat(curr.prize), 0);
@@ -343,11 +334,10 @@ export default function Dashboard() {
           <button onClick={() => setActiveTab('ledger')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm transition-all duration-300 whitespace-nowrap ${activeTab === 'ledger' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'text-slate-500 hover:bg-slate-800/50'}`}>PERSONAL LEDGER</button>
         </div>
 
-        {/* TAB 1: CLASSIC DRAW */}
         {activeTab === 'classic' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-full">
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[450px]">
                 <div>
                   <div className="flex justify-between items-center mb-8">
                     <h2 className="text-3xl font-black text-white">Classic Draw</h2>
@@ -379,7 +369,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[450px]">
                 <div className="flex justify-between items-center mb-6">
                   <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
                   <div className="flex items-center gap-2">
@@ -416,7 +406,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* TAB 2: MEGA JACKPOT 3/45 */}
         {activeTab === 'mega' && (
           <div className="flex flex-col gap-8 animate-fadeIn">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -429,7 +418,7 @@ export default function Dashboard() {
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
                       <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Time to UTC Draw</p>
-                      <p className="text-xl font-mono font-black text-amber-400">{globalTimeLeft}</p>
+                      <p className="text-xl font-mono font-black text-amber-400">{megaTimeLeft}</p>
                     </div>
                     <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
                       <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Draw Code</p>
@@ -519,7 +508,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* TAB 3: SCRATCH CARDS */}
         {activeTab === 'scratch' && (
            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-12 shadow-2xl text-center flex flex-col items-center animate-fadeIn">
              <h2 className="text-4xl font-black text-amber-400 mb-4">Instant Scratch Cards</h2>
@@ -534,11 +522,10 @@ export default function Dashboard() {
            </div>
         )}
 
-        {/* TAB 4: PERSONAL LEDGER */}
         {activeTab === 'ledger' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
             
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
               <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Picks & Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
@@ -570,7 +557,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col">
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
               <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
               <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
               {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
@@ -599,10 +586,9 @@ export default function Dashboard() {
 
           </div>
         )}
-
       </div>
 
-      {/* RAINBOWKIT / WEB3MODAL STYLE WALLET SELECTOR */}
+      {/* RAINBOWKIT STYLE WALLET SELECTOR */}
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-[#1a1b1f] border border-gray-800 rounded-[24px] max-w-sm w-full shadow-2xl overflow-hidden font-sans">
