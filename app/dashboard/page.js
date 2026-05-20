@@ -84,18 +84,32 @@ export default function Dashboard() {
     return () => clearInterval(clock);
   }, []);
 
+  // Classic Clock
+  const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
+  let isClassicReadyToDraw = false;
+  let classicTimeLeft = "Syncing...";
+  if (classicNextDrawTime > 0) {
+    if (diffClassic <= 0) {
+      classicTimeLeft = "READY TO DRAW!";
+      isClassicReadyToDraw = true;
+    } else {
+      classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`;
+    }
+  }
+
+  // Mega Clock (Strict UTC Hour)
   const currentUtc = new Date(now);
   const nextUtcHour = new Date(currentUtc);
   nextUtcHour.setUTCHours(currentUtc.getUTCHours() + 1, 0, 0, 0);
-  const diffUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
+  const diffMegaUtc = Math.floor((nextUtcHour.getTime() - currentUtc.getTime()) / 1000);
   
-  let globalTimeLeft = "Syncing...";
-  let isReadyToDraw = false;
-  if (diffUtc <= 0) {
-    globalTimeLeft = "READY TO DRAW!";
-    isReadyToDraw = true;
+  let isMegaReadyToDraw = false;
+  let megaTimeLeft = "Syncing...";
+  if (diffMegaUtc <= 0) {
+    megaTimeLeft = "READY TO DRAW!";
+    isMegaReadyToDraw = true;
   } else {
-    globalTimeLeft = `${Math.floor(diffUtc / 60).toString().padStart(2, '0')}m ${(diffUtc % 60).toString().padStart(2, '0')}s`;
+    megaTimeLeft = `${Math.floor(diffMegaUtc / 60).toString().padStart(2, '0')}m ${(diffMegaUtc % 60).toString().padStart(2, '0')}s`;
   }
 
   // --- FETCH BLOCKCHAIN DATA ---
@@ -109,12 +123,13 @@ export default function Dashboard() {
       setClassicPlayersList(await classicContract.getPlayers());
       
       const cLastTime = Number(await classicContract.lastDrawTime());
+      setClassicNextDrawTime(cLastTime + 3600);
       setClassicNextDrawCode(formatUtcRoundCode(cLastTime + 3600));
 
       try {
-        const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), -10000);
+        // Use block 0 to fetch entire history to avoid disappearing logs
+        const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), 0);
         setClassicHistoricalWinners(cEvents.map((e, i) => {
-          // Backward calculation for round code
           const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
           return {
             roundCode: formatUtcRoundCode(expectedTs),
@@ -135,8 +150,9 @@ export default function Dashboard() {
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
       try {
-        const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), -10000);
-        const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), -10000);
+        // Use block 0 to fetch entire history
+        const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), 0);
+        const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), 0);
         const compiledMegaHistory = [];
         
         wonEvents.forEach(e => {
@@ -155,7 +171,7 @@ export default function Dashboard() {
 
       if (wallet) {
          try {
-           const myTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(wallet), -10000);
+           const myTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(wallet), 0);
            setMyMegaTickets(myTicketLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
@@ -226,6 +242,7 @@ export default function Dashboard() {
 
   const handleBuyClassicTickets = async () => {
     if (!signerInstance) return showToast('Please connect your wallet first!', 'error');
+    if (isClassicReadyToDraw) return showToast('Round has ended! Please trigger the draw first.', 'error');
     try {
       setLoadingState('Signing...');
       const contract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, signerInstance);
@@ -264,6 +281,7 @@ export default function Dashboard() {
   const handleCheckoutMegaCart = async () => {
     if (!signerInstance) return showToast('Please connect your wallet!', 'error');
     if (megaCart.length === 0) return showToast('Cart is empty!', 'error');
+    if (isMegaReadyToDraw) return showToast('Round has ended! Please trigger the draw first.', 'error');
     try {
       setLoadingState('Signing...');
       const contract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, signerInstance);
@@ -337,52 +355,72 @@ return (
 
         {/* TAB 1: CLASSIC DRAW */}
         {activeTab === 'classic' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fadeIn">
-            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col h-[550px]">
-              <div>
-                <div className="flex justify-between items-center mb-8">
-                  <h2 className="text-3xl font-black text-white">Classic Draw</h2>
-                  <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold px-3 py-1.5 rounded-full">0.1 USDC / Ticket</span>
+          <div className="flex flex-col gap-8 animate-fadeIn">
+            {/* Top 2 Columns */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 flex flex-col">
+                <div>
+                  <div className="flex justify-between items-center mb-8">
+                    <h2 className="text-3xl font-black text-white">Classic Draw</h2>
+                    <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold px-3 py-1.5 rounded-full">0.1 USDC / Ticket</span>
+                  </div>
+                  <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 text-center">
+                    <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next UTC draw</p>
+                    <div className="text-4xl font-black text-amber-400 font-mono">{classicTimeLeft}</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center">
+                    <p className="text-emerald-500/80 text-[10px] font-bold uppercase mb-2">Current Jackpot Pool</p>
+                    <div className="text-5xl font-black text-emerald-400 font-mono">{classicPoolBalance} <span className="text-lg">USDC</span></div>
+                  </div>
+                  <div className="flex items-center justify-between bg-[#050810] py-4 px-6 rounded-2xl border border-slate-800 mb-6">
+                    <span className="text-slate-400 text-sm font-bold uppercase">Buy Quantity:</span>
+                    <input type="number" min="1" value={classicTicketCount} onChange={(e) => setClassicTicketCount(Math.max(1, parseInt(e.target.value) || 1))} className="bg-transparent text-white font-black text-3xl text-center w-24 outline-none" />
+                  </div>
                 </div>
-                <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 text-center">
-                  <p className="text-slate-500 text-[10px] font-bold uppercase mb-2">Time until next UTC draw</p>
-                  <div className="text-4xl font-black text-amber-400 font-mono">{globalTimeLeft}</div>
-                </div>
-                <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center">
-                  <p className="text-emerald-500/80 text-[10px] font-bold uppercase mb-2">Current Jackpot Pool</p>
-                  <div className="text-5xl font-black text-emerald-400 font-mono">{classicPoolBalance} <span className="text-lg">USDC</span></div>
-                </div>
-                <div className="flex items-center justify-between bg-[#050810] py-4 px-6 rounded-2xl border border-slate-800 mb-6">
-                  <span className="text-slate-400 text-sm font-bold uppercase">Buy Quantity:</span>
-                  <input type="number" min="1" value={classicTicketCount} onChange={(e) => setClassicTicketCount(Math.max(1, parseInt(e.target.value) || 1))} className="bg-transparent text-white font-black text-3xl text-center w-24 outline-none" />
+                <div className="space-y-3 mt-auto">
+                  <button onClick={handleBuyClassicTickets} disabled={!!loadingState || isClassicReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-md uppercase tracking-wider text-sm transition-all ${isClassicReadyToDraw ? "bg-slate-800 cursor-not-allowed" : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-90"}`}>
+                    {loadingState ? loadingState : (isClassicReadyToDraw ? "DRAW REQUIRED FIRST" : `Confirm Purchase (${(0.1 * classicTicketCount).toFixed(1)} USDC)`)}
+                  </button>
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-500 mb-2 uppercase font-bold">* Web3 requires a manual gas trigger to draw</p>
+                    <button onClick={handleDrawClassic} disabled={!!loadingState || !isClassicReadyToDraw} className={`w-full font-bold py-3 rounded-2xl text-xs uppercase transition-colors ${isClassicReadyToDraw ? "bg-amber-500 text-[#050810] hover:bg-amber-400" : "bg-transparent border border-slate-800 text-slate-600 cursor-not-allowed"}`}>
+                      Trigger Blockchain Draw
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-3 mt-auto">
-                <button onClick={handleBuyClassicTickets} disabled={!!loadingState} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-black py-4 rounded-2xl shadow-md uppercase tracking-wider text-sm hover:opacity-90 transition-opacity">
-                  {loadingState ? loadingState : `Confirm Purchase (${(0.1 * classicTicketCount).toFixed(1)} USDC)`}
-                </button>
-                <div className="text-center">
-                  <p className="text-[10px] text-slate-500 mb-2 uppercase font-bold">* Web3 requires a manual gas trigger to draw</p>
-                  <button onClick={handleDrawClassic} disabled={!!loadingState || !isReadyToDraw} className={`w-full font-bold py-3 rounded-2xl text-xs uppercase transition-colors ${isReadyToDraw ? "bg-amber-500 text-[#050810] hover:bg-amber-400" : "bg-transparent border border-slate-800 text-slate-600 cursor-not-allowed"}`}>
-                    Trigger Blockchain Draw
-                  </button>
+
+              <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold text-right">Round Code<br/>{classicNextDrawCode}</span>
+                    <span className="bg-[#050810] border border-slate-700 px-4 py-1.5 rounded-full text-xs font-bold text-slate-300">Total: {classicPlayersList.length}</span>
+                  </div>
+                </div>
+                <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                  {classicPlayersList.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">No tickets purchased in this round yet.</p> : classicPlayersList.map((player, index) => (
+                    <div key={index} className="flex justify-between items-center bg-[#0b1221] p-3 rounded-2xl border border-slate-800/50">
+                      <span className="text-slate-500 text-[10px] font-black uppercase">Ticket #{index + 1}</span>
+                      <span className="text-cyan-400 font-mono text-sm">{formatAddr(player)}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
-
-            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[550px]">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold text-right">Round Code<br/>{classicNextDrawCode}</span>
-                  <span className="bg-[#050810] border border-slate-700 px-4 py-1.5 rounded-full text-xs font-bold text-slate-300">Total: {classicPlayersList.length}</span>
-                </div>
-              </div>
-              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                {classicPlayersList.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">No tickets purchased in this round yet.</p> : classicPlayersList.map((player, index) => (
-                  <div key={index} className="flex justify-between items-center bg-[#0b1221] p-3 rounded-2xl border border-slate-800/50">
-                    <span className="text-slate-500 text-[10px] font-black uppercase">Ticket #{index + 1}</span>
-                    <span className="text-cyan-400 font-mono text-sm">{formatAddr(player)}</span>
+            
+            {/* Bottom Full-width: Global Classic History */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
+              <h2 className="text-2xl font-black text-cyan-400 mb-2">Global Classic History</h2>
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Past Winners Overview</p>
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
+                {classicHistoricalWinners.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No history found.</p> : classicHistoricalWinners.map((data, index) => (
+                  <div key={index} className="flex justify-between items-center bg-[#0b1221] p-4 rounded-2xl border border-slate-800/50">
+                    <div>
+                      <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black uppercase px-3 py-1 rounded-full">{data.roundCode}</span>
+                      <p className="text-sm font-mono text-slate-400 mt-2">Winner: <span className="text-white">{formatAddr(data.winner)}</span></p>
+                    </div>
+                    <span className="text-emerald-400 font-black text-xl">+{data.prize} USDC</span>
                   </div>
                 ))}
               </div>
@@ -392,77 +430,104 @@ return (
 
         {/* TAB 2: MEGA JACKPOT 3/45 */}
         {activeTab === 'mega' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fadeIn">
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-[650px]">
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-black text-fuchsia-400">Mega Jackpot 3/45</h2>
-                  <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 text-xs font-bold px-3 py-1 rounded-full">1.0 USDC / Ticket</span>
+          <div className="flex flex-col gap-8 animate-fadeIn">
+            {/* Top 2 Columns */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 h-full min-h-[500px]">
+                <div>
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-black text-fuchsia-400">Mega Jackpot 3/45</h2>
+                    <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 text-xs font-bold px-3 py-1 rounded-full">1.0 USDC / Ticket</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
+                      <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Time to UTC Draw</p>
+                      <p className="text-xl font-mono font-black text-amber-400">{globalTimeLeft}</p>
+                    </div>
+                    <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
+                      <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Draw Code</p>
+                      <p className="text-md font-black text-white mt-1">{megaNextDrawCode}</p>
+                    </div>
+                  </div>
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-5 mb-6">
+                    <div className="flex justify-between border-b border-slate-800 pb-3 mb-3">
+                      <span className="text-slate-400 text-[10px] font-bold uppercase mt-1">Accumulated Jackpot</span>
+                      <span className="text-emerald-400 font-black text-2xl">{megaPoolBalance} USDC</span>
+                    </div>
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-500 uppercase font-bold">Seed Pool (Next Round Backup):</span>
+                      <span className="text-teal-400 font-bold">{megaSeedPoolBalance} USDC</span>
+                    </div>
+                  </div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Select exactly 3 numbers ({megaSelectedNumbers.length}/3):</p>
+                  <div className="grid grid-cols-6 sm:grid-cols-9 gap-2 p-3 bg-[#050810] rounded-2xl overflow-y-auto border border-slate-800/80 mb-6 custom-scrollbar">
+                    {Array.from({length: 45}, (_, i) => i + 1).map(num => (
+                      <button key={num} onClick={() => toggleMegaNumber(num)} className={`py-2 rounded-xl text-xs font-black transition-all ${megaSelectedNumbers.includes(num) ? 'bg-fuchsia-500 text-white shadow-md shadow-fuchsia-500/50' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white hover:border-slate-500'}`}>{num.toString().padStart(2, '0')}</button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
-                    <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Time to UTC Draw</p>
-                    <p className="text-xl font-mono font-black text-amber-400">{globalTimeLeft}</p>
-                  </div>
-                  <div className="bg-[#050810] p-4 rounded-2xl border border-slate-800 text-center">
-                    <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Draw Code</p>
-                    <p className="text-md font-black text-white mt-1">{megaNextDrawCode}</p>
-                  </div>
-                </div>
-                <div className="bg-[#050810] border border-slate-800 rounded-3xl p-5 mb-6">
-                  <div className="flex justify-between border-b border-slate-800 pb-3 mb-3">
-                    <span className="text-slate-400 text-[10px] font-bold uppercase mt-1">Accumulated Jackpot</span>
-                    <span className="text-emerald-400 font-black text-2xl">{megaPoolBalance} USDC</span>
-                  </div>
-                  <div className="flex justify-between text-[10px]">
-                    <span className="text-slate-500 uppercase font-bold">Seed Pool (Next Round Backup):</span>
-                    <span className="text-teal-400 font-bold">{megaSeedPoolBalance} USDC</span>
-                  </div>
-                </div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Select exactly 3 numbers ({megaSelectedNumbers.length}/3):</p>
-                <div className="grid grid-cols-6 sm:grid-cols-9 gap-2 p-3 bg-[#050810] rounded-2xl border border-slate-800/80 mb-6">
-                  {Array.from({length: 45}, (_, i) => i + 1).map(num => (
-                    <button key={num} onClick={() => toggleMegaNumber(num)} className={`py-2 rounded-xl text-xs font-black transition-all ${megaSelectedNumbers.includes(num) ? 'bg-fuchsia-500 text-white shadow-md shadow-fuchsia-500/50' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white hover:border-slate-500'}`}>{num.toString().padStart(2, '0')}</button>
-                  ))}
+                <div className="mt-auto">
+                  <button onClick={addToMegaCart} disabled={megaSelectedNumbers.length !== 3} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-2xl text-sm transition-colors border border-slate-700 disabled:opacity-50">+ Add Ticket To Cart</button>
                 </div>
               </div>
-              <div className="mt-auto">
-                <button onClick={addToMegaCart} disabled={megaSelectedNumbers.length !== 3} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-2xl text-sm transition-colors border border-slate-700 disabled:opacity-50">+ Add Ticket To Cart</button>
+
+              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-fuchsia-400">Your Ticket Cart</h3>
+                  <span className="bg-[#050810] border border-slate-700 px-3 py-1 rounded-full text-xs font-bold text-slate-300">Total: {megaCart.length}</span>
+                </div>
+                <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                  {megaCart.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">Cart is empty. Select numbers to add.</p> : megaCart.map((ticket, idx) => (
+                    <div key={idx} className="bg-[#0b1221] p-3 rounded-xl border border-slate-700 flex justify-between items-center">
+                      <div className="flex gap-4 items-center">
+                        <span className="text-slate-500 font-bold text-[10px] uppercase">Ticket {String.fromCharCode(65 + idx)}</span>
+                        <div className="flex gap-2">
+                          {ticket.map((n, i) => <span key={i} className="bg-fuchsia-900/30 text-fuchsia-400 font-bold border border-fuchsia-500/20 w-8 h-8 rounded-full flex items-center justify-center text-[11px]">{n.toString().padStart(2, '0')}</span>)}
+                        </div>
+                      </div>
+                      <button onClick={() => removeFromCart(idx)} className="text-rose-500 hover:text-rose-400 px-3 font-bold text-xl">×</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 pt-4 border-t border-slate-800">
+                  <div className="flex justify-between mb-4 items-end">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Total Checkout:</span>
+                    <span className="text-2xl font-black text-fuchsia-400">{megaCart.length.toFixed(1)} USDC</span>
+                  </div>
+                  <button onClick={handleCheckoutMegaCart} disabled={!!loadingState || megaCart.length === 0 || isMegaReadyToDraw} className={`w-full text-white font-black py-4 rounded-2xl shadow-lg uppercase text-sm mb-3 transition-all ${isMegaReadyToDraw || megaCart.length === 0 ? "bg-slate-800 cursor-not-allowed opacity-50" : "bg-gradient-to-r from-fuchsia-500 to-purple-600 hover:opacity-90"}`}>
+                    {loadingState ? loadingState : (isMegaReadyToDraw ? "DRAW REQUIRED FIRST" : "CHECKOUT ALL TICKETS")}
+                  </button>
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-500 mb-2 uppercase font-bold">* Web3 requires a manual gas trigger to draw</p>
+                    <button onClick={handleDrawMega} disabled={!!loadingState || !isMegaReadyToDraw} className={`w-full font-bold py-3 rounded-2xl text-xs uppercase transition-colors ${isMegaReadyToDraw ? "bg-amber-500 text-[#050810] hover:bg-amber-400" : "bg-transparent border border-slate-800 text-slate-600 cursor-not-allowed"}`}>
+                      Trigger Mega Draw
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-[650px]">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-fuchsia-400">Your Ticket Cart</h3>
-                <span className="bg-[#050810] border border-slate-700 px-3 py-1 rounded-full text-xs font-bold text-slate-300">Total: {megaCart.length}</span>
-              </div>
-              <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                {megaCart.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">Cart is empty. Select numbers to add.</p> : megaCart.map((ticket, idx) => (
-                  <div key={idx} className="bg-[#0b1221] p-3 rounded-xl border border-slate-700 flex justify-between items-center">
-                    <div className="flex gap-4 items-center">
-                      <span className="text-slate-500 font-bold text-[10px] uppercase">Ticket {String.fromCharCode(65 + idx)}</span>
-                      <div className="flex gap-2">
-                        {ticket.map((n, i) => <span key={i} className="bg-fuchsia-900/30 text-fuchsia-400 font-bold border border-fuchsia-500/20 w-8 h-8 rounded-full flex items-center justify-center text-[11px]">{n.toString().padStart(2, '0')}</span>)}
-                      </div>
+            {/* Bottom Full-width: Global Mega History */}
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col w-full">
+              <h2 className="text-2xl font-black text-fuchsia-400 mb-2">Global Mega History</h2>
+              <p className="text-slate-500 text-xs mb-4 uppercase font-bold">Rollover & Win Activity</p>
+              <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto max-h-[400px] flex-1 space-y-3 custom-scrollbar">
+                {megaHistoryLogs.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No logs found.</p> : megaHistoryLogs.map((log, index) => (
+                  <div key={index} className={`bg-[#0b1221] p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${log.status === 'WIN' ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-amber-500/20'}`}>
+                    <div className="flex flex-col gap-2 w-full md:w-auto">
+                      <span className={`w-max text-[10px] font-black uppercase px-3 py-1 rounded-full border ${log.status === 'WIN' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                        {log.roundCode} - {log.status}
+                      </span>
+                      <span className="text-slate-400 font-mono text-sm mt-1">Drawn Numbers: <span className="text-white font-bold tracking-widest">{log.winningNumbers}</span></span>
                     </div>
-                    <button onClick={() => removeFromCart(idx)} className="text-rose-500 hover:text-rose-400 px-3 font-bold text-xl">×</button>
+                    <div className="flex flex-col md:items-end w-full md:w-auto">
+                      <span className={`font-black text-xl ${log.status === 'WIN' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {log.status === 'WIN' ? `Each: +${log.prize} USDC` : `Pool Roll: ${log.prize} USDC`}
+                      </span>
+                      <span className="text-slate-500 italic text-[11px] mt-1">{log.detail}</span>
+                    </div>
                   </div>
                 ))}
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-800">
-                <div className="flex justify-between mb-4 items-end">
-                  <span className="text-slate-400 font-bold uppercase text-[10px]">Total Checkout:</span>
-                  <span className="text-2xl font-black text-fuchsia-400">{megaCart.length.toFixed(1)} USDC</span>
-                </div>
-                <button onClick={handleCheckoutMegaCart} disabled={!!loadingState || megaCart.length === 0} className="w-full bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white font-black py-4 rounded-2xl shadow-lg uppercase text-sm mb-3 disabled:opacity-50 hover:opacity-90 transition-opacity">
-                  {loadingState ? loadingState : "CHECKOUT ALL TICKETS"}
-                </button>
-                <div className="text-center">
-                  <p className="text-[10px] text-slate-500 mb-2 uppercase font-bold">* Web3 requires a manual gas trigger to draw</p>
-                  <button onClick={handleDrawMega} disabled={!!loadingState || !isReadyToDraw} className={`w-full font-bold py-3 rounded-2xl text-xs uppercase transition-colors ${isReadyToDraw ? "bg-amber-500 text-[#050810] hover:bg-amber-400" : "bg-transparent border border-slate-800 text-slate-600 cursor-not-allowed"}`}>
-                    Trigger Mega Draw
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -485,113 +550,67 @@ return (
 
         {/* TAB 4: PERSONAL LEDGER */}
         {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fadeIn">
-            
-            {/* Global Logs Column */}
-            <div className="flex flex-col gap-8">
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col flex-1 min-h-[350px]">
-                <h2 className="text-xl font-black text-fuchsia-400 mb-2">Global Mega History</h2>
-                <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar mt-2">
-                  {megaHistoryLogs.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No logs found.</p> : megaHistoryLogs.map((log, index) => (
-                    <div key={index} className={`bg-[#0b1221] p-4 rounded-xl border flex flex-col gap-2 ${log.status === 'WIN' ? 'border-emerald-500/30 bg-emerald-950/20' : 'border-amber-500/20'}`}>
-                      <div className="flex justify-between items-center">
-                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${log.status === 'WIN' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-                          {log.roundCode}
-                        </span>
-                        <span className={`font-black text-sm ${log.status === 'WIN' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                          {log.status === 'WIN' ? `EACH: +${log.prize} USDC` : `POOL: ${log.prize} USDC`}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-400 font-mono">Numbers: <span className="text-white font-bold">{log.winningNumbers}</span></span>
-                        <span className="text-slate-500 italic text-[10px]">{log.detail}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col flex-1 min-h-[300px]">
-                <h2 className="text-xl font-black text-cyan-400 mb-2">Global Classic History</h2>
-                <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar mt-2">
-                  {classicHistoricalWinners.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No logs found.</p> : classicHistoricalWinners.map((data, index) => (
-                    <div key={index} className="bg-[#0b1221] p-3 rounded-xl border border-slate-800/80 flex flex-col gap-2">
-                      <div className="flex justify-between items-center">
-                        <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-black text-[10px] uppercase px-2 py-0.5 rounded-full">{data.roundCode}</span>
-                        <span className="text-emerald-400 font-black text-sm">+{data.prize} USDC</span>
-                      </div>
-                      <p className="text-[11px] font-mono text-slate-400 truncate">Winner: {formatAddr(data.winner)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Personal Logs Column */}
-            <div className="flex flex-col gap-8">
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 min-h-[350px]">
-                <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
-                <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Picks & Wins</p>
-                {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                       <div className="p-4 bg-[#050810] border border-slate-800 rounded-xl text-center">
-                          <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Tickets Bought</p>
-                          <p className="text-2xl font-black text-white">{myMegaTickets.length}</p>
-                       </div>
-                       <div className="p-4 bg-fuchsia-950/20 border border-fuchsia-900/50 rounded-xl text-center">
-                          <p className="text-fuchsia-500 text-[10px] uppercase font-bold mb-1">Winning Rounds</p>
-                          <p className="text-2xl font-black text-fuchsia-400">{myMegaWinsCount}</p>
-                       </div>
-                    </div>
-                    <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                      {myMegaTickets.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets bought.</p> : myMegaTickets.map((t, index) => {
-                        const isWin = megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers);
-                        const isPending = t.roundIdx === megaCurrentRound;
-                        return (
-                          <div key={index} className={`bg-[#0b1221] p-3 rounded-xl border flex justify-between items-center ${isWin ? 'border-emerald-500/50' : 'border-slate-800/80'}`}>
-                            <span className="text-fuchsia-400 font-black text-[10px] uppercase">{t.roundCode}</span>
-                            <span className="font-mono text-white text-xs font-bold">{t.numbers}</span>
-                            <span className={`text-[10px] font-black uppercase ${isPending ? 'text-amber-400' : (isWin ? 'text-emerald-400' : 'text-slate-600')}`}>{isPending ? 'PENDING' : (isWin ? 'WON' : 'LOST')}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col flex-1 min-h-[300px]">
-                <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
-                <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
-                {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                       <div className="p-3 bg-[#050810] border border-slate-800 rounded-xl text-center">
-                          <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Wins / Current Tix</p>
-                          <p className="text-xl font-black text-white">{myClassicWinsCount} / {myClassicTicketsThisRound.length}</p>
-                       </div>
-                       <div className="p-3 bg-cyan-950/20 border border-cyan-900/50 rounded-xl text-center">
-                          <p className="text-cyan-500 text-[10px] uppercase font-bold mb-1">Total USDC Won</p>
-                          <p className="text-xl font-black text-cyan-400">{myClassicWinnings.toFixed(1)}</p>
-                       </div>
-                    </div>
-                    <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                      {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
-                        <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
-                          <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
-                          <span className="text-emerald-400 text-xs font-black">+{h.prize} USDC</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+              <h2 className="text-2xl font-black text-fuchsia-400 mb-2">My Mega Profile</h2>
+              <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Picks & Wins</p>
+              {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
+                <>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                     <div className="p-4 bg-[#050810] border border-slate-800 rounded-xl text-center">
+                        <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Tickets Bought</p>
+                        <p className="text-2xl font-black text-white">{myMegaTickets.length}</p>
+                     </div>
+                     <div className="p-4 bg-fuchsia-950/20 border border-fuchsia-900/50 rounded-xl text-center">
+                        <p className="text-fuchsia-500 text-[10px] uppercase font-bold mb-1">Winning Rounds</p>
+                        <p className="text-2xl font-black text-fuchsia-400">{myMegaWinsCount}</p>
+                     </div>
+                  </div>
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                    {myMegaTickets.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-10">No Mega tickets bought.</p> : myMegaTickets.map((t, index) => {
+                      const isWin = megaHistoryLogs.some(h => h.roundIdx === t.roundIdx && h.status === 'WIN' && h.winningNumbers === t.numbers);
+                      const isPending = t.roundIdx === megaCurrentRound;
+                      return (
+                        <div key={index} className={`bg-[#0b1221] p-3 rounded-xl border flex justify-between items-center ${isWin ? 'border-emerald-500/50' : 'border-slate-800/80'}`}>
+                          <span className="text-fuchsia-400 font-black text-[10px] uppercase">{t.roundCode}</span>
+                          <span className="font-mono text-white text-xs font-bold">{t.numbers}</span>
+                          <span className={`text-[10px] font-black uppercase ${isPending ? 'text-amber-400' : (isWin ? 'text-emerald-400' : 'text-slate-600')}`}>{isPending ? 'PENDING' : (isWin ? 'WON' : 'LOST')}</span>
                         </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </div>
-            
+
+            <div className="bg-[#0b1221]/70 border border-slate-800 rounded-[40px] p-8 flex flex-col h-full min-h-[500px]">
+              <h2 className="text-2xl font-black text-cyan-400 mb-2">My Classic Profile</h2>
+              <p className="text-slate-500 text-[10px] mb-4 uppercase font-bold">Your Current Tickets & Past Wins</p>
+              {!wallet ? <p className="text-slate-600 text-sm py-10 text-center">Connect wallet to view.</p> : (
+                <>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                     <div className="p-3 bg-[#050810] border border-slate-800 rounded-xl text-center">
+                        <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">Wins / Current Tix</p>
+                        <p className="text-xl font-black text-white">{myClassicWinsCount} / {myClassicTicketsThisRound.length}</p>
+                     </div>
+                     <div className="p-3 bg-cyan-950/20 border border-cyan-900/50 rounded-xl text-center">
+                        <p className="text-cyan-500 text-[10px] uppercase font-bold mb-1">Total USDC Won</p>
+                        <p className="text-xl font-black text-cyan-400">{myClassicWinnings.toFixed(1)}</p>
+                     </div>
+                  </div>
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                    {classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).length === 0 ? <p className="text-slate-600 text-sm italic text-center py-6">No classic wins recorded yet.</p> : classicHistoricalWinners.filter(h => h.winner.toLowerCase() === wallet.toLowerCase()).map((h, i) => (
+                      <div key={i} className="bg-[#0b1221] p-3 rounded-xl border border-emerald-500/50 flex justify-between items-center">
+                        <span className="text-cyan-400 font-black text-[10px] uppercase">{h.roundCode}</span>
+                        <span className="text-emerald-400 text-xs font-black">+{h.prize} USDC</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
-
       </div>
 
       {/* Wallet Selector Modal Pop-up */}
