@@ -25,24 +25,26 @@ export default function Dashboard() {
   const [ticketCount, setTicketCount] = useState(1);
   const [showWalletModal, setShowWalletModal] = useState(false);
 
-  // Blockchain States
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+
+  const showToast = (message, type = 'success') => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => setNotification({ show: false, message: '', type: 'success' }), 5000);
+  };
+
+  const [selectedNumbers, setSelectedNumbers] = useState([]);
   const [poolBalance, setPoolBalance] = useState('0.0');
   const [playersList, setPlayersList] = useState([]);
   const [winner, setWinner] = useState('None');
-  const [nextDrawTime, setNextDrawTime] = useState(0);
   const [historicalWinners, setHistoricalWinners] = useState([]);
+  const [nextDrawTime, setNextDrawTime] = useState(0);
 
-  // 1. Bulletproof Clock Pattern: Keeps ticking every 1s, completely unblocked by network requests
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
-
   useEffect(() => {
-    const clock = setInterval(() => {
-      setNow(Math.floor(Date.now() / 1000));
-    }, 1000);
+    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(clock);
   }, []);
 
-  // 2. Compute countdown string instantly in the render frame based on 'now' tick
   const diff = nextDrawTime - now;
   let timeLeft = "Syncing...";
   if (nextDrawTime > 0) {
@@ -67,9 +69,7 @@ export default function Dashboard() {
       setPlayersList(pList);
       
       const lastW = await lotto.recentWinner();
-      if (lastW !== "0x0000000000000000000000000000000000000000") {
-        setWinner(lastW);
-      }
+      if (lastW !== "0x0000000000000000000000000000000000000000") setWinner(lastW);
 
       const lastTime = await lotto.lastDrawTime();
       setNextDrawTime(Number(lastTime) + 3600);
@@ -83,17 +83,12 @@ export default function Dashboard() {
           prize: ethers.formatEther(event.args[1])
         })).reverse();
         setHistoricalWinners(historyData);
-      } catch (logErr) {
-        console.error("Log fetch error:", logErr);
-      }
-    } catch (err) {
-      console.error("Public Data Error:", err);
-    }
+      } catch (logErr) { console.error("Log fetch error:", logErr); }
+    } catch (err) { console.error("Public Data Error:", err); }
   };
 
   useEffect(() => {
     fetchPublicData();
-
     const autoReconnect = async () => {
       const savedWalletType = localStorage.getItem('connectedWalletType');
       if (!savedWalletType || typeof window === 'undefined') return;
@@ -112,15 +107,10 @@ export default function Dashboard() {
             const signer = await browserProvider.getSigner();
             setWallet(accounts[0]);
             setSignerInstance(signer);
-          } else {
-            localStorage.removeItem('connectedWalletType');
-          }
-        } catch (e) {
-          console.error("Auto-reconnect failed", e);
-        }
+          } else { localStorage.removeItem('connectedWalletType'); }
+        } catch (e) { console.error("Auto-reconnect failed", e); }
       }
     };
-    
     setTimeout(autoReconnect, 500);
   }, []);
 
@@ -132,7 +122,8 @@ export default function Dashboard() {
       else if (walletType === 'trust' && window.trustwallet) targetProvider = window.trustwallet;
       else if (window.ethereum) targetProvider = window.ethereum;
     }
-    if (!targetProvider) return alert(`No Web3 wallet extension detected!`);
+    
+    if (!targetProvider) return showToast("No Web3 wallet extension detected!", "error");
 
     try {
       await targetProvider.request({ method: 'eth_requestAccounts' });
@@ -141,10 +132,7 @@ export default function Dashboard() {
       
       if (Number(network.chainId) !== ARC_CHAIN_ID) {
         try {
-          await targetProvider.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: ARC_CHAIN_ID_HEX }],
-          });
+          await targetProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: ARC_CHAIN_ID_HEX }] });
         } catch (switchError) {
           if (switchError.code === 4902) {
             await targetProvider.request({
@@ -171,11 +159,12 @@ export default function Dashboard() {
       localStorage.setItem('connectedWalletType', walletType);
       
       await fetchPublicData();
-    } catch (err) { alert(`Error: ${err.message || 'Connection failed'}`); }
+      showToast("Wallet connected successfully!", "success");
+    } catch (err) { showToast(`Error: ${err.message || 'Connection failed'}`, "error"); }
   };
 
   const handleBuyTickets = async () => {
-    if (!signerInstance) return alert('Please connect your wallet first!');
+    if (!signerInstance) return showToast('Please connect your wallet first!', 'error');
     try {
       setLoadingState('Sign in Wallet...');
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
@@ -186,15 +175,15 @@ export default function Dashboard() {
       setLoadingState('Mining Block...');
       await tx.wait(); 
       
-      alert(`Success! Purchased ${ticketCount} ticket(s).`);
+      showToast(`Success! Purchased ${ticketCount} ticket(s).`, 'success');
       await fetchPublicData();
     } catch (err) {
-      alert('Transaction failed or rejected.');
+      showToast('Transaction failed or rejected.', 'error');
     } finally { setLoadingState(''); }
   };
 
   const handleDrawLottery = async () => {
-    if (!signerInstance) return alert('Please connect your wallet first!');
+    if (!signerInstance) return showToast('Please connect your wallet first!', 'error');
     try {
       setLoadingState('Sign to Draw...');
       const lotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signerInstance);
@@ -203,11 +192,27 @@ export default function Dashboard() {
       setLoadingState('Mining Block...');
       await tx.wait();
       
-      alert('Draw Successful! Prize sent automatically.');
+      const updatedLotto = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, new ethers.JsonRpcProvider(ARC_RPC_URL));
+      const newWinner = await updatedLotto.recentWinner();
+      
+      if (newWinner.toLowerCase() === wallet.toLowerCase()) {
+        showToast('🎉 JACKPOT! YOU WON! The prize has been sent directly to your wallet.', 'success');
+      } else {
+        showToast(`Draw Successful! The winner is ${newWinner.substring(0,8)}... Better luck next time!`, 'info');
+      }
+
       await fetchPublicData();
     } catch (err) {
-      alert('Cannot Draw! Ensure timer is at 00:00 and players have bought tickets.');
+      showToast('Cannot Draw! Ensure timer is at 00:00 and players have bought tickets.', 'error');
     } finally { setLoadingState(''); }
+  };
+
+  const toggleMegaNumber = (num) => {
+    if (selectedNumbers.includes(num)) {
+      setSelectedNumbers(selectedNumbers.filter(n => n !== num));
+    } else if (selectedNumbers.length < 6) {
+      setSelectedNumbers([...selectedNumbers, num]);
+    }
   };
 
   const myTicketIndexes = playersList
@@ -215,138 +220,132 @@ export default function Dashboard() {
     .filter(index => index !== null);
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-white p-4 md:p-8 font-sans antialiased">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8 mt-4">
-          <h1 className="text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 mb-2 tracking-tight">
-            ARC DECENTRALIZED LOTTERY
+    <div className="min-h-screen bg-[#050810] text-white p-4 md:p-8 font-sans antialiased relative overflow-hidden">
+      
+      {/* Nền hiệu ứng ánh sáng (Ambient Glow) */}
+      <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-cyan-600/15 blur-[120px] rounded-full pointer-events-none z-0"></div>
+
+      {/* TOAST NOTIFICATION */}
+      {notification.show && (
+        <div className="fixed top-8 left-0 right-0 flex justify-center z-[100] animate-fadeIn">
+          <div className={`backdrop-blur-2xl px-6 py-4 rounded-2xl shadow-2xl border flex items-center gap-4 transition-all transform
+            ${notification.type === 'success' ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.2)]' : 
+              notification.type === 'error' ? 'bg-rose-950/80 border-rose-500/50 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.2)]' : 
+              'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.2)]'}`}>
+            <div className="text-2xl drop-shadow-md">
+              {notification.type === 'success' ? '✅' : notification.type === 'error' ? '❌' : '🔔'}
+            </div>
+            <p className="font-bold text-sm tracking-wide">{notification.message}</p>
+            <button 
+              onClick={() => setNotification({ show: false, message: '', type: '' })} 
+              className="ml-4 opacity-50 hover:opacity-100 text-white transition-opacity"
+            >✕</button>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-5xl mx-auto relative z-10">
+        
+        {/* Header Rebranded */}
+        <div className="text-center mb-10 mt-6">
+          <h1 className="text-6xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 mb-3 tracking-tighter drop-shadow-sm">
+            ARC LOTTERY
           </h1>
-          <p className="text-slate-500 text-sm font-semibold tracking-widest uppercase">
-            Fair, Transparent, and fully On-Chain
+          <p className="text-cyan-400/80 text-sm font-bold tracking-[0.3em] uppercase">
+            Fair • Transparent • On-Chain
           </p>
         </div>
 
-        <div className="flex justify-end mb-6">
+        {/* Connect button */}
+        <div className="flex justify-end mb-8">
           {wallet ? (
-            <div className="flex items-center gap-2">
-              <button onClick={() => { navigator.clipboard.writeText(wallet); alert("Address Copied!"); }} className="bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700/50 py-3 px-5 rounded-2xl font-mono text-sm shadow-xl font-bold text-cyan-400" title="Click to copy">
-                🟢 {wallet.substring(0,6)}...{wallet.substring(38)}
+            <div className="flex items-center gap-3">
+              <button onClick={() => { navigator.clipboard.writeText(wallet); showToast("Address Copied to clipboard!", "success"); }} className="bg-[#0b1221] hover:bg-[#131d33] border border-cyan-900/50 py-3 px-6 rounded-2xl font-mono text-sm shadow-xl font-bold text-cyan-400 hover:border-cyan-500/50 transition-all duration-300" title="Click to copy">
+                <span className="mr-2 inline-block w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                {wallet.substring(0,6)}...{wallet.substring(38)}
               </button>
-              <button onClick={() => { setWallet(''); setSignerInstance(null); localStorage.removeItem('connectedWalletType'); }} className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 py-3 px-4 rounded-2xl font-bold text-sm transition-all shadow-xl">
+              <button onClick={() => { setWallet(''); setSignerInstance(null); localStorage.removeItem('connectedWalletType'); showToast("Logged out successfully.", "info"); }} className="bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 py-3 px-5 rounded-2xl font-bold text-sm transition-all shadow-xl">
                 Log Out
               </button>
             </div>
           ) : (
-            <button onClick={() => setShowWalletModal(true)} className="bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700/50 py-3 px-6 rounded-2xl font-mono text-sm shadow-xl font-bold">
+            <button onClick={() => setShowWalletModal(true)} className="bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 py-3 px-8 rounded-2xl font-mono text-sm shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] font-bold transition-all duration-300 transform hover:-translate-y-1">
               🔌 Connect Web3 Wallet
             </button>
           )}
         </div>
 
-        <div className="flex gap-2 p-1.5 bg-[#0f172a]/80 border border-slate-800 rounded-2xl mb-8 overflow-x-auto">
-          <button onClick={() => setActiveTab('classic')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'classic' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>⏱️ CLASSIC DRAW</button>
-          <button onClick={() => setActiveTab('mega')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'mega' ? 'bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🎯 MEGA 6/45</button>
-          <button onClick={() => setActiveTab('scratch')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'scratch' ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>🎟️ SCRATCH CARDS</button>
-          <button onClick={() => setActiveTab('ledger')} className={`flex-1 py-3 px-4 rounded-xl font-black text-sm tracking-wide transition-all whitespace-nowrap ${activeTab === 'ledger' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>📜 TRANSPARENCY LEDGER</button>
+        {/* Modern Tabs */}
+        <div className="flex gap-3 p-2 bg-[#0b1221]/80 backdrop-blur-md border border-slate-800/80 rounded-3xl mb-10 overflow-x-auto shadow-2xl">
+          <button onClick={() => setActiveTab('classic')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm tracking-wide transition-all duration-300 whitespace-nowrap ${activeTab === 'classic' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 border border-transparent'}`}>⏱️ CLASSIC DRAW</button>
+          <button onClick={() => setActiveTab('mega')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm tracking-wide transition-all duration-300 whitespace-nowrap ${activeTab === 'mega' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/30 shadow-[0_0_15px_rgba(217,70,239,0.15)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 border border-transparent'}`}>🎯 MEGA 6/45</button>
+          <button onClick={() => setActiveTab('scratch')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm tracking-wide transition-all duration-300 whitespace-nowrap ${activeTab === 'scratch' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.15)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 border border-transparent'}`}>🎟️ SCRATCH CARDS</button>
+          <button onClick={() => setActiveTab('ledger')} className={`flex-1 py-3.5 px-6 rounded-2xl font-black text-sm tracking-wide transition-all duration-300 whitespace-nowrap ${activeTab === 'ledger' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 border border-transparent'}`}>📜 HISTORY & TICKETS</button>
         </div>
 
+        {/* Tab 1: Classic Lottery */}
         {activeTab === 'classic' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
-            <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-6 shadow-2xl flex flex-col justify-between">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fadeIn">
+            {/* Purchase Card */}
+            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 hover:border-cyan-500/30 transition-colors duration-500 rounded-[40px] p-8 shadow-2xl flex flex-col justify-between group">
               <div>
-                <h2 className="text-2xl font-black text-cyan-400 mb-1">Hourly Classic Draw</h2>
-                <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-6">Ticket Price: 0.1 USDC</p>
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-black text-white group-hover:text-cyan-400 transition-colors">Classic Draw</h2>
+                  <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold px-3 py-1.5 rounded-full">0.1 USDC / Ticket</span>
+                </div>
                 
-                <div className="bg-[#05080f] border border-slate-800/50 rounded-2xl p-4 mb-5 flex flex-col items-center justify-center">
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-1">Time until next draw</p>
-                  <div className={`text-3xl font-black font-mono tracking-wider ${timeLeft === 'READY TO DRAW!' ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`}>
+                <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 mb-6 flex flex-col items-center justify-center shadow-inner">
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em] mb-2">Time until next draw</p>
+                  <div className={`text-4xl font-black font-mono tracking-wider ${timeLeft === 'READY TO DRAW!' ? 'text-emerald-400 animate-pulse drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.3)]'}`}>
                     {timeLeft}
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-b from-teal-950/20 to-emerald-950/20 border border-emerald-500/20 rounded-2xl p-5 mb-6 text-center">
-                  <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Current Jackpot Pool</p>
-                  <div className="text-4xl font-black text-emerald-400 tracking-tight">{poolBalance} <span className="text-lg font-medium">USDC</span></div>
+                <div className="bg-gradient-to-br from-emerald-900/30 to-teal-900/10 border border-emerald-500/30 rounded-3xl p-6 mb-6 text-center relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
+                  <p className="text-emerald-500/80 text-xs font-bold uppercase tracking-[0.2em] mb-2 relative z-10">Current Jackpot Pool</p>
+                  <div className="text-5xl font-black text-emerald-400 tracking-tight drop-shadow-md relative z-10">{poolBalance} <span className="text-xl font-medium text-emerald-500/50">USDC</span></div>
                 </div>
 
-                <div className="flex items-center justify-between bg-[#05080f] py-4 px-6 rounded-xl border border-slate-800 mb-6">
-                  <span className="text-slate-400 text-xs font-bold uppercase">Buy Quantity:</span>
+                <div className="flex items-center justify-between bg-[#050810] py-4 px-6 rounded-2xl border border-slate-800 mb-8">
+                  <span className="text-slate-400 text-sm font-bold uppercase tracking-wider">Buy Quantity:</span>
                   <input 
                     type="number" min="1" value={ticketCount} 
                     onChange={(e) => setTicketCount(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="bg-transparent text-white font-black text-2xl text-center w-24 outline-none"
+                    className="bg-transparent text-white font-black text-3xl text-center w-24 outline-none focus:text-cyan-400 transition-colors"
                     style={{ appearance: 'textfield', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
                   />
                 </div>
               </div>
 
-              <div>
-                <button onClick={handleBuyTickets} disabled={!!loadingState} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black py-4 rounded-xl shadow-xl transition-all mb-3 text-sm tracking-wider uppercase">
+              <div className="space-y-4">
+                <button onClick={handleBuyTickets} disabled={!!loadingState} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black py-4 md:py-5 rounded-2xl shadow-[0_0_20px_rgba(6,182,212,0.2)] hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all duration-300 transform hover:-translate-y-1 tracking-wider uppercase">
                   {loadingState ? loadingState : `Confirm Purchase (${(0.1 * ticketCount).toFixed(1)} USDC)`}
                 </button>
-                <button onClick={handleDrawLottery} disabled={!!loadingState} className={`w-full font-bold py-4 rounded-xl transition-all text-xs tracking-widest uppercase ${timeLeft === "READY TO DRAW!" ? "bg-amber-500 text-slate-900 hover:bg-amber-400 animate-pulse shadow-lg shadow-amber-500/20" : "bg-transparent border border-slate-700 hover:bg-slate-800 text-amber-500/50"}`}>
+                <button onClick={handleDrawLottery} disabled={!!loadingState} className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 text-sm tracking-[0.2em] uppercase ${timeLeft === "READY TO DRAW!" ? "bg-amber-500 text-[#050810] hover:bg-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.5)] transform hover:-translate-y-1" : "bg-transparent border border-slate-800 hover:border-slate-700 text-slate-500 hover:text-slate-400"}`}>
                   {timeLeft === "READY TO DRAW!" ? "🏆 Execute Draw & Payout Prize" : "Trigger Blockchain Draw"}
                 </button>
               </div>
             </div>
 
-            <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-6 shadow-2xl flex flex-col items-center justify-center text-center">
-               <div className="text-7xl mb-4">🎫</div>
-               <h3 className="text-xl font-bold text-slate-300 mb-2">Fair Play Guaranteed</h3>
-               <p className="text-slate-500 text-sm">Our smart contracts utilize unmanipulable on-chain randomness. Funds are locked securely and distributed automatically to the winner. No manual claiming needed!</p>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'mega' && (
-           <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-8 shadow-2xl text-center animate-fadeIn">
-             <h2 className="text-3xl font-black text-fuchsia-400 mb-2">Mega 6/45 Jackpot</h2>
-             <p className="text-slate-500 text-sm mb-8">Select 6 lucky numbers. Match them all to win the grand multi-million pool. (Contract integration pending)</p>
-           </div>
-        )}
-
-        {activeTab === 'scratch' && (
-           <div className="bg-[#0f172a]/60 border border-slate-800 backdrop-blur-xl rounded-[32px] p-8 shadow-2xl text-center flex flex-col items-center animate-fadeIn">
-             <h2 className="text-3xl font-black text-amber-400 mb-2">Instant Scratch Cards</h2>
-             <p className="text-slate-500 text-sm mb-12">Experience sub-second blockchain finality. Buy, scratch, and reveal your prize instantly.</p>
-           </div>
-        )}
-
-        {activeTab === 'ledger' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fadeIn">
-            <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
+            {/* Current Round List */}
+            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 shadow-2xl flex flex-col h-full min-h-[500px]">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-black text-cyan-400">Current Round Ledger</h2>
-                <span className="bg-slate-800 px-3 py-1 rounded-full text-xs font-bold text-slate-400">Total: {playersList.length} tickets</span>
+                <h2 className="text-xl font-black text-white uppercase tracking-widest">Live Network</h2>
+                <span className="bg-[#050810] border border-slate-700 px-4 py-1.5 rounded-full text-xs font-bold text-slate-300">Total: {playersList.length} tickets</span>
               </div>
-              <p className="text-slate-500 text-xs uppercase font-black mb-3 tracking-wide">Tickets awaiting draw:</p>
-              <div className="bg-[#05080f] border border-slate-800/80 rounded-2xl p-4 overflow-y-auto h-[350px] space-y-2">
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-4">Tickets awaiting draw:</p>
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-4 overflow-y-auto flex-1 space-y-3 custom-scrollbar">
                 {playersList.length === 0 ? (
-                  <p className="text-slate-600 text-sm italic text-center mt-10">No tickets purchased in this round yet.</p>
+                  <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
+                    <span className="text-5xl mb-4">🎟️</span>
+                    <p className="text-sm font-medium">No tickets purchased in this round yet.</p>
+                  </div>
                 ) : (
                   playersList.map((player, index) => (
-                    <div key={index} className="flex justify-between items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800/50">
-                      <span className="text-slate-400 text-xs font-bold">#{index + 1}</span>
-                      <span className="text-cyan-400 font-mono text-xs truncate ml-2">{player}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="bg-[#0f172a]/60 border border-slate-800 rounded-[32px] p-8 shadow-2xl">
-              <h2 className="text-2xl font-black text-amber-400 mb-6">Past Winners History</h2>
-              <div className="bg-[#05080f] border border-slate-800/80 rounded-2xl p-4 overflow-y-auto h-[380px] space-y-3">
-                {historicalWinners.length === 0 ? (
-                  <p className="text-slate-600 text-sm italic text-center mt-10">No past draws found or still syncing logs.</p>
-                ) : (
-                  historicalWinners.map((data, index) => (
-                    <div key={index} className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl flex flex-col justify-center">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-amber-500/80 text-xs uppercase font-black tracking-wide">🏆 Round Payout</span>
-                        <span className="text-emerald-400 font-black text-sm">+{data.prize} USDC</span>
-                      </div>
-                      <div className="font-mono text-xs text-amber-400 truncate">Winner: {data.winner}</div>
+                    <div key={index} className="flex justify-between items-center bg-[#0b1221] p-4 rounded-2xl border border-slate-800/50 hover:border-cyan-900/50 transition-colors">
+                      <span className="text-slate-500 text-xs font-black uppercase">#{index + 1}</span>
+                      <span className="text-cyan-400 font-mono text-sm truncate ml-4">{player}</span>
                     </div>
                   ))
                 )}
@@ -354,20 +353,152 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* Tab 2: Mega 6/45 */}
+        {activeTab === 'mega' && (
+           <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-12 shadow-2xl text-center animate-fadeIn">
+             <h2 className="text-4xl font-black text-fuchsia-400 mb-4 tracking-tight">Mega 6/45 Jackpot</h2>
+             <p className="text-slate-400 text-sm mb-12 max-w-lg mx-auto leading-relaxed">Select 6 lucky numbers. Match them all to win the grand multi-million pool. This feature is currently undergoing Smart Contract integration.</p>
+             <div className="grid grid-cols-5 md:grid-cols-9 gap-3 mb-10 max-w-3xl mx-auto">
+               {Array.from({length: 45}, (_, i) => i + 1).map(num => (
+                 <button key={num} onClick={() => toggleMegaNumber(num)} className={`aspect-square rounded-2xl font-black text-lg flex items-center justify-center transition-all duration-300 transform ${selectedNumbers.includes(num) ? 'bg-fuchsia-500 text-white shadow-[0_0_20px_rgba(217,70,239,0.4)] scale-110 -translate-y-1' : 'bg-[#050810] text-slate-500 hover:text-white hover:bg-slate-800 border border-slate-800'}`}>
+                   {num}
+                 </button>
+               ))}
+             </div>
+             <div className="bg-[#050810] p-6 rounded-3xl border border-slate-800 inline-block min-w-[300px]">
+               <span className="text-slate-500 uppercase text-xs font-bold mr-4 tracking-wider">Your Selection ({selectedNumbers.length}/6):</span>
+               <span className="font-mono text-fuchsia-400 font-bold text-2xl">{selectedNumbers.length > 0 ? selectedNumbers.sort((a,b)=>a-b).join(' - ') : '--'}</span>
+             </div>
+             <div className="mt-10">
+               <button disabled className="bg-[#050810] border border-slate-800 text-slate-600 px-10 py-5 rounded-2xl font-black tracking-[0.2em] uppercase cursor-not-allowed">Submit Entry (Coming Soon)</button>
+             </div>
+           </div>
+        )}
+
+        {/* Tab 3: Scratch Cards */}
+        {activeTab === 'scratch' && (
+           <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-12 shadow-2xl text-center flex flex-col items-center animate-fadeIn">
+             <h2 className="text-4xl font-black text-amber-400 mb-4 tracking-tight">Instant Scratch Cards</h2>
+             <p className="text-slate-400 text-sm mb-16 max-w-lg leading-relaxed">Experience sub-second blockchain finality. Buy, scratch, and reveal your prize instantly on the Arc Network.</p>
+             <div className="relative group cursor-pointer">
+               <div className="absolute -inset-1 bg-gradient-to-r from-amber-400 to-orange-600 rounded-[40px] blur opacity-25 group-hover:opacity-60 transition duration-1000 group-hover:duration-200"></div>
+               <div className="relative bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-[36px] w-80 h-80 transform group-hover:scale-105 transition-all duration-500">
+                 <div className="bg-[#050810] w-full h-full rounded-[30px] flex flex-col items-center justify-center border-4 border-dashed border-amber-500/20">
+                   <span className="text-amber-500 font-black text-4xl uppercase tracking-widest mb-3">Scratch</span>
+                   <span className="text-slate-500 font-bold text-sm uppercase tracking-widest">To Reveal</span>
+                 </div>
+               </div>
+             </div>
+             <p className="text-slate-600 text-xs uppercase tracking-[0.3em] mt-16 font-bold bg-[#050810] px-6 py-2 rounded-full border border-slate-800">Smart Contract under Audit</p>
+           </div>
+        )}
+
+        {/* Tab 4: Ledger & History */}
+        {activeTab === 'ledger' && (
+          <div className="grid grid-cols-1 gap-8 animate-fadeIn">
+            {/* My Tickets Section */}
+            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 md:p-10 shadow-2xl">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+                <div>
+                  <h2 className="text-3xl font-black text-emerald-400 mb-2 tracking-tight">My Active Inventory</h2>
+                  <p className="text-slate-500 text-sm">Track your entries for the current pending draw.</p>
+                </div>
+                {wallet && (
+                  <div className="flex gap-4">
+                     <div className="bg-[#050810] px-6 py-3 rounded-2xl border border-slate-800 flex flex-col items-end">
+                       <span className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Total Tickets</span>
+                       <span className="text-2xl font-black text-white leading-none">{myTicketIndexes.length}</span>
+                     </div>
+                     <div className="bg-emerald-950/20 px-6 py-3 rounded-2xl border border-emerald-900/50 flex flex-col items-end">
+                       <span className="text-emerald-500/70 text-[10px] font-bold uppercase tracking-wider mb-1">Win Chance</span>
+                       <span className="text-2xl font-black text-emerald-400 leading-none">
+                         {playersList.length > 0 ? ((myTicketIndexes.length / playersList.length) * 100).toFixed(1) : 0}%
+                       </span>
+                     </div>
+                  </div>
+                )}
+              </div>
+
+              {!wallet ? (
+                <div className="bg-[#050810] p-12 rounded-3xl border border-slate-800 flex flex-col items-center justify-center">
+                  <span className="text-4xl mb-4">🔌</span>
+                  <p className="text-slate-400 mb-6 text-sm font-medium">Please connect your wallet to view your secure inventory.</p>
+                  <button onClick={() => setShowWalletModal(true)} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black tracking-wider uppercase py-3 px-8 rounded-xl text-sm transition-colors">Connect Wallet</button>
+                </div>
+              ) : (
+                <div>
+                  {myTicketIndexes.length === 0 ? (
+                    <div className="bg-[#050810] p-10 rounded-3xl border border-slate-800 flex flex-col items-center justify-center text-slate-500">
+                      <span className="text-3xl mb-3 opacity-50">🎫</span>
+                      <p className="text-sm font-medium">You have 0 tickets in this round.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 gap-3 max-h-[200px] overflow-y-auto custom-scrollbar p-2">
+                      {myTicketIndexes.map(idx => (
+                        <div key={idx} className="bg-emerald-500/10 border border-emerald-500/30 py-3 rounded-2xl text-center font-black text-emerald-400 font-mono shadow-inner text-sm hover:bg-emerald-500/20 transition-colors">
+                          #{idx}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Global History Table */}
+            <div className="bg-[#0b1221]/70 backdrop-blur-2xl border border-slate-800 rounded-[40px] p-8 md:p-10 shadow-2xl">
+              <h2 className="text-3xl font-black text-amber-400 mb-8 tracking-tight">Past Winners History</h2>
+              <div className="bg-[#050810] border border-slate-800/80 rounded-3xl p-6 overflow-y-auto max-h-[500px] space-y-4 custom-scrollbar">
+                {historicalWinners.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-600">
+                    <span className="text-4xl mb-4 opacity-50">📜</span>
+                    <p className="text-sm font-medium">No past draws found or still syncing blockchain logs.</p>
+                  </div>
+                ) : (
+                  historicalWinners.map((data, index) => (
+                    <div key={index} className="bg-[#0b1221] border border-slate-800 hover:border-amber-500/30 p-5 rounded-2xl flex flex-col md:flex-row md:justify-between md:items-center gap-4 transition-all group">
+                      <div>
+                         <span className="inline-block bg-amber-500/10 text-amber-500 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full mb-3 border border-amber-500/20">Round #{data.round}</span>
+                         <div className="font-mono text-sm text-slate-300 group-hover:text-amber-200 transition-colors">
+                           <span className="text-slate-500 mr-2 text-xs font-sans uppercase">Winner:</span> 
+                           {data.winner}
+                         </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-emerald-400 font-black text-xl drop-shadow-md">+{data.prize} USDC</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
+      {/* Modern Modal */}
       {showWalletModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-[#0f172a] border border-slate-700 rounded-3xl max-w-sm w-full p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-white">Select Wallet</h3>
-              <button onClick={() => setShowWalletModal(false)} className="text-slate-500 hover:text-white font-bold text-xl">✕</button>
+        <div className="fixed inset-0 bg-[#050810]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-[#0b1221] border border-slate-700/50 rounded-[40px] max-w-sm w-full p-8 shadow-2xl shadow-cyan-900/20 transform scale-100 transition-all">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-black text-white tracking-tight">Connect</h3>
+              <button onClick={() => setShowWalletModal(false)} className="bg-[#050810] text-slate-400 hover:text-white hover:bg-slate-800 w-10 h-10 rounded-full font-bold text-lg flex items-center justify-center transition-colors">✕</button>
             </div>
-            <div className="space-y-3">
-              <button onClick={() => connectWallet('okx')} className="w-full bg-[#05080f] hover:bg-slate-800 border border-slate-800 py-4 px-4 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all">⬛ OKX Wallet</button>
-              <button onClick={() => connectWallet('binance')} className="w-full bg-[#05080f] hover:bg-slate-800 border border-slate-800 py-4 px-4 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all">🔶 Binance Web3</button>
-              <button onClick={() => connectWallet('trust')} className="w-full bg-[#05080f] hover:bg-slate-800 border border-slate-800 py-4 px-4 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all">🛡️ Trust Wallet</button>
-              <button onClick={() => connectWallet('browser')} className="w-full bg-[#05080f] hover:bg-slate-800 border border-slate-800 py-4 px-4 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all">🦊 MetaMask / Extension</button>
+            <div className="space-y-4">
+              <button onClick={() => connectWallet('okx')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 hover:border-slate-600 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all group">
+                <span className="text-2xl group-hover:scale-110 transition-transform">⬛</span> OKX Wallet
+              </button>
+              <button onClick={() => connectWallet('binance')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 hover:border-slate-600 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all group">
+                <span className="text-2xl group-hover:scale-110 transition-transform">🔶</span> Binance Web3
+              </button>
+              <button onClick={() => connectWallet('trust')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 hover:border-slate-600 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all group">
+                <span className="text-2xl group-hover:scale-110 transition-transform">🛡️</span> Trust Wallet
+              </button>
+              <button onClick={() => connectWallet('browser')} className="w-full bg-[#050810] hover:bg-slate-800 border border-slate-800 hover:border-slate-600 py-4 px-6 rounded-2xl text-sm font-bold flex items-center gap-4 transition-all group">
+                <span className="text-2xl group-hover:scale-110 transition-transform">🦊</span> Browser Extension
+              </button>
             </div>
           </div>
         </div>
