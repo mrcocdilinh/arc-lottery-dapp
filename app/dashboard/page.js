@@ -36,7 +36,7 @@ const MEGA_ABI = [
 
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false);
-  const [now, setNow] = useState(null);
+  const [now, setNow] = useState(0);
   const [wallet, setWallet] = useState('');
   const [signerInstance, setSignerInstance] = useState(null);
   const [activeTab, setActiveTab] = useState('classic'); 
@@ -61,11 +61,22 @@ export default function Dashboard() {
     return `${yyyy}${mm}${dd}-${h}`;
   };
 
-  // Safe manual array parser to avoid Ethers v6 Proxy issues
-  const safeParseNumbers = (argsArray) => {
-    try {
-      return `${Number(argsArray[0]).toString().padStart(2, '0')} - ${Number(argsArray[1]).toString().padStart(2, '0')} - ${Number(argsArray[2]).toString().padStart(2, '0')}`;
+  const formatNumbersSafe = (arr) => {
+    try { 
+      return `${Number(arr[0]).toString().padStart(2, '0')} - ${Number(arr[1]).toString().padStart(2, '0')} - ${Number(arr[2]).toString().padStart(2, '0')}`;
     } catch(e) { return 'N/A'; }
+  };
+
+  // Safe History Fetcher to bypass RPC limits
+  const getSafeEvents = async (contract, filter, currentBlock) => {
+    try { return await contract.queryFilter(filter, 0, 'latest'); } 
+    catch (e1) {
+      try { return await contract.queryFilter(filter, Math.max(0, currentBlock - 50000), 'latest'); } 
+      catch (e2) {
+        try { return await contract.queryFilter(filter, Math.max(0, currentBlock - 10000), 'latest'); } 
+        catch (e3) { return []; }
+      }
+    }
   };
 
   // --- CLASSIC STATE ---
@@ -87,11 +98,12 @@ export default function Dashboard() {
   const [megaTicketsCountThisRound, setMegaTicketsCountThisRound] = useState(0);
   const [megaHistoryLogs, setMegaHistoryLogs] = useState([]);
   const [myMegaTickets, setMyMegaTickets] = useState([]);
+  const [myActiveMegaTickets, setMyActiveMegaTickets] = useState([]);
 
   useEffect(() => {
     setMounted(true);
-    setNow(Math.floor(Date.now() / 1000));
-    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    setNow(Date.now());
+    const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(clock);
   }, []);
 
@@ -100,9 +112,6 @@ export default function Dashboard() {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       const currentBlock = await provider.getBlockNumber();
-      // Lấy dải block an toàn để không bị miss lịch sử
-      let fromBlock = currentBlock - 50000; 
-      if (fromBlock < 0) fromBlock = 0;
       
       // FETCH CLASSIC
       const classicContract = new ethers.Contract(CLASSIC_ADDRESS, CLASSIC_ABI, provider);
@@ -113,13 +122,11 @@ export default function Dashboard() {
       setClassicNextDrawTime(cLastTime + 3600);
       setClassicNextDrawCode(formatUtcRoundCode(cLastTime + 3600));
 
-      try {
-        const cEvents = await classicContract.queryFilter(classicContract.filters.WinnerPicked(), fromBlock, currentBlock);
-        setClassicHistoricalWinners(cEvents.map((e, i) => {
-          const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
-          return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
-        }).reverse());
-      } catch (e) { console.error("Classic logs error", e); }
+      const cEvents = await getSafeEvents(classicContract, classicContract.filters.WinnerPicked(), currentBlock);
+      setClassicHistoricalWinners(cEvents.map((e, i) => {
+        const expectedTs = cLastTime - ((cEvents.length - 1 - i) * 3600);
+        return { roundCode: formatUtcRoundCode(expectedTs), winner: e.args[0], prize: ethers.formatEther(e.args[1]) };
+      }).reverse());
 
       // FETCH MEGA
       const megaContract = new ethers.Contract(MEGA_ADDRESS, MEGA_ABI, provider);
@@ -133,37 +140,36 @@ export default function Dashboard() {
       setMegaNextDrawCode(formatUtcRoundCode(mLastTime + 3600));
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
-      try {
-        const wonEvents = await megaContract.queryFilter(megaContract.filters.JackpotWon(), fromBlock, currentBlock);
-        const noEvents = await megaContract.queryFilter(megaContract.filters.NoWinner(), fromBlock, currentBlock);
-        const compiledMegaHistory = [];
-        
-        wonEvents.forEach(e => {
-          const r = Number(e.args[0]);
-          const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: safeParseNumbers(e.args[1]), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
-        });
-        
-        noEvents.forEach(e => {
-          const r = Number(e.args[0]);
-          const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: safeParseNumbers(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
-        });
-        setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
-      } catch (e) { console.error("Mega logs error", e); }
+      const wonEvents = await getSafeEvents(megaContract, megaContract.filters.JackpotWon(), currentBlock);
+      const noEvents = await getSafeEvents(megaContract, megaContract.filters.NoWinner(), currentBlock);
+      const compiledMegaHistory = [];
+      
+      wonEvents.forEach(e => {
+        const r = Number(e.args[0]);
+        const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
+        compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
+      });
+      
+      noEvents.forEach(e => {
+        const r = Number(e.args[0]);
+        const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
+        compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
+      });
+      setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
 
-      // FETCH MY MEGA TICKETS (Local filtering to bypass broken RPC indexes)
+      // FETCH MY MEGA TICKETS
       if (wallet) {
-         try {
-           const allTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(), fromBlock, currentBlock);
-           const filteredLogs = allTicketLogs.filter(e => e.args[0].toLowerCase() === wallet.toLowerCase());
-           
-           setMyMegaTickets(filteredLogs.map(e => {
-             const r = Number(e.args[1]);
-             const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: safeParseNumbers(e.args[2]) };
-           }).reverse());
-         } catch(e) { console.error("My tickets fetch error", e); }
+         const allTicketLogs = await getSafeEvents(megaContract, megaContract.filters.TicketBought(), currentBlock);
+         const filteredLogs = allTicketLogs.filter(e => e.args[0].toLowerCase() === wallet.toLowerCase());
+         
+         const parsedMyTickets = filteredLogs.map(e => {
+           const r = Number(e.args[1]);
+           const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
+           return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: formatNumbersSafe(e.args[2]) };
+         }).reverse();
+         
+         setMyMegaTickets(parsedMyTickets);
+         setMyActiveMegaTickets(parsedMyTickets.filter(t => t.roundIdx === mRound));
       }
 
     } catch (err) { console.error("Fetch Data Error:", err); }
@@ -192,8 +198,8 @@ export default function Dashboard() {
 
   if (!mounted || !now) return null;
 
-  // --- TIME CALCULATIONS (Relative logic restored) ---
-  const diffClassic = classicNextDrawTime - now;
+  // --- TIME CALCULATIONS ---
+  const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
   let isClassicReadyToDraw = false;
   let classicTimeLeft = "Syncing...";
   if (classicNextDrawTime > 0) {
@@ -201,7 +207,7 @@ export default function Dashboard() {
     else { classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`; }
   }
 
-  const diffMega = megaNextDrawTime - now;
+  const diffMega = megaNextDrawTime - Math.floor(now / 1000);
   let isMegaReadyToDraw = false;
   let megaTimeLeft = "Syncing...";
   if (megaNextDrawTime > 0) {
@@ -443,7 +449,6 @@ export default function Dashboard() {
                       <span className="text-slate-400 text-[10px] font-bold uppercase mt-1">Accumulated Jackpot</span>
                       <span className="text-emerald-400 font-black text-2xl">{megaPoolBalance} USDC</span>
                     </div>
-                    {/* HIỂN THỊ KẾT QUẢ GẦN NHẤT */}
                     {latestMegaResult && (
                        <div className="flex justify-between items-center bg-[#0b1221]/50 p-2 rounded-xl mt-2 border border-slate-800">
                          <span className="text-slate-500 text-[9px] uppercase font-bold">Last Result ({latestMegaResult.roundCode})</span>
@@ -459,7 +464,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="mt-auto">
-                  <button onClick={addToMegaCart} disabled={megaSelectedNumbers.length !== 3} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-2xl text-sm transition-colors border border-slate-700 disabled:opacity-50">+ Add Ticket To Cart</button>
+                  <button onClick={addToMegaCart} disabled={megaSelectedNumbers.length !== 3 || isMegaReadyToDraw} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 rounded-2xl text-sm transition-colors border border-slate-700 disabled:opacity-50">+ Add Ticket To Cart</button>
                 </div>
               </div>
 
@@ -468,19 +473,36 @@ export default function Dashboard() {
                   <h3 className="text-xl font-bold text-fuchsia-400">Your Ticket Cart</h3>
                   <span className="bg-[#050810] border border-slate-700 px-3 py-1 rounded-full text-xs font-bold text-slate-300">Total: {megaCart.length}</span>
                 </div>
-                <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
-                  {megaCart.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">Cart is empty. Select numbers to add.</p> : megaCart.map((ticket, idx) => (
-                    <div key={idx} className="bg-[#0b1221] p-3 rounded-xl border border-slate-700 flex justify-between items-center">
-                      <div className="flex gap-4 items-center">
-                        <span className="text-slate-500 font-bold text-[10px] uppercase">Ticket {String.fromCharCode(65 + idx)}</span>
-                        <div className="flex gap-2">
-                          {ticket.map((n, i) => <span key={i} className="bg-fuchsia-900/30 text-fuchsia-400 font-bold border border-fuchsia-500/20 w-8 h-8 rounded-full flex items-center justify-center text-[11px]">{n.toString().padStart(2, '0')}</span>)}
+                
+                {/* HIỂN THỊ VÉ MEGA ĐÃ MUA THÀNH CÔNG CHO KỲ HIỆN TẠI NẾU GIỎ HÀNG TRỐNG */}
+                {megaCart.length === 0 && myActiveMegaTickets.length > 0 ? (
+                  <div className="flex-1 flex flex-col">
+                    <p className="text-emerald-400 text-xs font-bold uppercase mb-2">Purchased Tickets ({megaNextDrawCode})</p>
+                    <div className="bg-[#050810] border border-emerald-900/50 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                      {myActiveMegaTickets.map((t, idx) => (
+                        <div key={idx} className="bg-emerald-950/20 p-3 rounded-xl border border-emerald-500/30 flex justify-between items-center">
+                          <span className="text-emerald-500 font-bold text-[10px] uppercase">Active Ticket</span>
+                          <span className="text-white font-mono font-bold tracking-widest text-sm">{t.numbers}</span>
                         </div>
-                      </div>
-                      <button onClick={() => removeFromCart(idx)} className="text-rose-500 hover:text-rose-400 px-3 font-bold text-xl">×</button>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="bg-[#050810] border border-slate-800 rounded-3xl p-4 overflow-y-auto flex-1 space-y-2 custom-scrollbar">
+                    {megaCart.length === 0 ? <p className="text-slate-600 text-sm italic text-center py-20">Cart is empty. Select numbers to add.</p> : megaCart.map((ticket, idx) => (
+                      <div key={idx} className="bg-[#0b1221] p-3 rounded-xl border border-slate-700 flex justify-between items-center">
+                        <div className="flex gap-4 items-center">
+                          <span className="text-slate-500 font-bold text-[10px] uppercase">Ticket {String.fromCharCode(65 + idx)}</span>
+                          <div className="flex gap-2">
+                            {ticket.map((n, i) => <span key={i} className="bg-fuchsia-900/30 text-fuchsia-400 font-bold border border-fuchsia-500/20 w-8 h-8 rounded-full flex items-center justify-center text-[11px]">{n.toString().padStart(2, '0')}</span>)}
+                          </div>
+                        </div>
+                        <button onClick={() => removeFromCart(idx)} className="text-rose-500 hover:text-rose-400 px-3 font-bold text-xl">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="mt-4 pt-4 border-t border-slate-800">
                   <div className="flex justify-between mb-4 items-end">
                     <span className="text-slate-400 font-bold uppercase text-[10px]">Total Checkout:</span>
