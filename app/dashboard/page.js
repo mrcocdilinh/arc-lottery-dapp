@@ -61,10 +61,10 @@ export default function Dashboard() {
     return `${yyyy}${mm}${dd}-${h}`;
   };
 
-  const formatNumbersSafe = (arr) => {
-    try { 
-      // Xử lý an toàn tuyệt đối mảng BigInt của Ethers v6
-      return `${Number(arr[0]).toString().padStart(2, '0')} - ${Number(arr[1]).toString().padStart(2, '0')} - ${Number(arr[2]).toString().padStart(2, '0')}`;
+  // Safe manual array parser to avoid Ethers v6 Proxy issues
+  const safeParseNumbers = (argsArray) => {
+    try {
+      return `${Number(argsArray[0]).toString().padStart(2, '0')} - ${Number(argsArray[1]).toString().padStart(2, '0')} - ${Number(argsArray[2]).toString().padStart(2, '0')}`;
     } catch(e) { return 'N/A'; }
   };
 
@@ -82,7 +82,7 @@ export default function Dashboard() {
   const [megaPoolBalance, setMegaPoolBalance] = useState('0.0');
   const [megaSeedPoolBalance, setMegaSeedPoolBalance] = useState('0.0');
   const [megaNextDrawCode, setMegaNextDrawCode] = useState('');
-  const [megaNextDrawTime, setMegaNextDrawTime] = useState(0); // Sửa đồng bộ với Smart Contract
+  const [megaNextDrawTime, setMegaNextDrawTime] = useState(0);
   const [megaCurrentRound, setMegaCurrentRound] = useState(1);
   const [megaTicketsCountThisRound, setMegaTicketsCountThisRound] = useState(0);
   const [megaHistoryLogs, setMegaHistoryLogs] = useState([]);
@@ -90,8 +90,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     setMounted(true);
-    setNow(Date.now());
-    const clock = setInterval(() => setNow(Date.now()), 1000);
+    setNow(Math.floor(Date.now() / 1000));
+    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(clock);
   }, []);
 
@@ -100,7 +100,8 @@ export default function Dashboard() {
     try {
       const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
       const currentBlock = await provider.getBlockNumber();
-      let fromBlock = currentBlock - 100000; 
+      // Lấy dải block an toàn để không bị miss lịch sử
+      let fromBlock = currentBlock - 50000; 
       if (fromBlock < 0) fromBlock = 0;
       
       // FETCH CLASSIC
@@ -128,7 +129,7 @@ export default function Dashboard() {
       const mRound = Number(await megaContract.currentRound());
       const mLastTime = Number(await megaContract.lastDrawTime());
       setMegaCurrentRound(mRound);
-      setMegaNextDrawTime(mLastTime + 3600); // ĐỒNG BỘ THỜI GIAN THỰC TẾ CỦA SMART CONTRACT
+      setMegaNextDrawTime(mLastTime + 3600);
       setMegaNextDrawCode(formatUtcRoundCode(mLastTime + 3600));
       setMegaTicketsCountThisRound(Number(await megaContract.getTicketsCount(mRound)));
 
@@ -140,24 +141,27 @@ export default function Dashboard() {
         wonEvents.forEach(e => {
           const r = Number(e.args[0]);
           const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
+          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: safeParseNumbers(e.args[1]), status: 'WIN', detail: `${Number(e.args[2])} Winners sharing`, prize: ethers.formatEther(e.args[3]) });
         });
         
         noEvents.forEach(e => {
           const r = Number(e.args[0]);
           const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: formatNumbersSafe(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
+          compiledMegaHistory.push({ roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), winningNumbers: safeParseNumbers(e.args[1]), status: 'ROLLOVER', detail: 'No Winners (Rolled Over)', prize: ethers.formatEther(e.args[2]) });
         });
         setMegaHistoryLogs(compiledMegaHistory.sort((a, b) => b.roundIdx - a.roundIdx));
       } catch (e) { console.error("Mega logs error", e); }
 
+      // FETCH MY MEGA TICKETS (Local filtering to bypass broken RPC indexes)
       if (wallet) {
          try {
-           const myTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(wallet), fromBlock, currentBlock);
-           setMyMegaTickets(myTicketLogs.map(e => {
+           const allTicketLogs = await megaContract.queryFilter(megaContract.filters.TicketBought(), fromBlock, currentBlock);
+           const filteredLogs = allTicketLogs.filter(e => e.args[0].toLowerCase() === wallet.toLowerCase());
+           
+           setMyMegaTickets(filteredLogs.map(e => {
              const r = Number(e.args[1]);
              const expectedTs = mLastTime - ((mRound - 1 - r) * 3600);
-             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: formatNumbersSafe(e.args[2]) };
+             return { roundIdx: r, roundCode: formatUtcRoundCode(expectedTs), numbers: safeParseNumbers(e.args[2]) };
            }).reverse());
          } catch(e) { console.error("My tickets fetch error", e); }
       }
@@ -188,8 +192,8 @@ export default function Dashboard() {
 
   if (!mounted || !now) return null;
 
-  // --- TIME CALCULATIONS (SYNCED WITH SMART CONTRACTS) ---
-  const diffClassic = classicNextDrawTime - Math.floor(now / 1000);
+  // --- TIME CALCULATIONS (Relative logic restored) ---
+  const diffClassic = classicNextDrawTime - now;
   let isClassicReadyToDraw = false;
   let classicTimeLeft = "Syncing...";
   if (classicNextDrawTime > 0) {
@@ -197,7 +201,7 @@ export default function Dashboard() {
     else { classicTimeLeft = `${Math.floor(diffClassic / 60).toString().padStart(2, '0')}m ${(diffClassic % 60).toString().padStart(2, '0')}s`; }
   }
 
-  const diffMega = megaNextDrawTime - Math.floor(now / 1000);
+  const diffMega = megaNextDrawTime - now;
   let isMegaReadyToDraw = false;
   let megaTimeLeft = "Syncing...";
   if (megaNextDrawTime > 0) {
@@ -439,7 +443,7 @@ export default function Dashboard() {
                       <span className="text-slate-400 text-[10px] font-bold uppercase mt-1">Accumulated Jackpot</span>
                       <span className="text-emerald-400 font-black text-2xl">{megaPoolBalance} USDC</span>
                     </div>
-                    {/* HIỂN THỊ LỊCH SỬ KẾT QUẢ GẦN NHẤT ĐỂ MINH BẠCH */}
+                    {/* HIỂN THỊ KẾT QUẢ GẦN NHẤT */}
                     {latestMegaResult && (
                        <div className="flex justify-between items-center bg-[#0b1221]/50 p-2 rounded-xl mt-2 border border-slate-800">
                          <span className="text-slate-500 text-[9px] uppercase font-bold">Last Result ({latestMegaResult.roundCode})</span>
